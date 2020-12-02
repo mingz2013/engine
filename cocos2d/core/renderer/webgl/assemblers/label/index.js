@@ -23,32 +23,76 @@
  THE SOFTWARE.
  ****************************************************************************/
 
-const Label = require('../../../../components/CCLabel');
+import Assembler from '../../../assembler';
+import Label from '../../../../components/CCLabel';
 
-const ttfAssembler = require('./2d/ttf');
-const bmfontAssembler = require('./2d/bmfont');
+import TTF from './2d/ttf';
+import Bmfont from './2d/bmfont';
+import Letter from './2d/letter';
 
-const ttfAssembler3D = require('./3d/ttf');
-const bmfontAssembler3D = require('./3d/bmfont');
+import TTF3D from './3d/ttf';
+import Bmfont3D from './3d/bmfont';
+import Letter3D from './3d/letter';
 
-var labelAssembler = {
-    getAssembler (comp) {
-        let is3DNode = comp.node.is3DNode;
-        let assembler = is3DNode ? ttfAssembler3D : ttfAssembler;
-        
-        if (comp.font instanceof cc.BitmapFont) {
-            assembler = is3DNode ? bmfontAssembler3D : bmfontAssembler;
+let NativeTTF = undefined;
+if(CC_JSB) {
+    NativeTTF = require("./2d/nativeTTF");
+}
+
+Label._canvasPool = {
+    pool: [],
+    get () {
+        let data = this.pool.pop();
+
+        if (!data) {
+            let canvas = document.createElement("canvas");
+            let context = canvas.getContext("2d");
+            data = {
+                canvas: canvas,
+                context: context
+            }
+
+            // default text info
+            context.textBaseline = 'alphabetic';
         }
 
-        return assembler;
+        return data;
     },
-
-    // Skip invalid labels (without own _assembler)
-    updateRenderData (label) {
-        return label.__allocedDatas;
+    put (canvas) {
+        if (this.pool.length >= 32) {
+            return;
+        }
+        this.pool.push(canvas);
     }
 };
 
-Label._assembler = labelAssembler;
+Assembler.register(cc.Label, {
+    getConstructor(label) {
+        let is3DNode = label.node.is3DNode;
+        let ctor = is3DNode ? TTF3D : TTF;
+        
+        if (label.font instanceof cc.BitmapFont) {
+            ctor = is3DNode ? Bmfont3D : Bmfont;
+        } else if (label.cacheMode === Label.CacheMode.CHAR) {
 
-module.exports = labelAssembler;
+            if(CC_JSB && !is3DNode && !!jsb.LabelRenderer && label.font instanceof cc.TTFFont && label._useNativeTTF()){
+                ctor = NativeTTF;
+            } else if (cc.sys.platform === cc.sys.WECHAT_GAME_SUB) {
+                cc.warn('sorry, subdomain does not support CHAR mode currently!');
+            } else {
+                ctor = is3DNode ? Letter3D : Letter;
+            }  
+        }
+
+        return ctor;
+    },
+
+    TTF,
+    Bmfont,
+    Letter,
+
+    TTF3D,
+    Bmfont3D,
+    Letter3D,
+    NativeTTF
+});

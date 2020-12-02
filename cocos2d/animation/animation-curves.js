@@ -24,20 +24,20 @@
  ****************************************************************************/
 
 
-var bezierByTime = require('./bezier').bezierByTime;
+const bezierByTime = require('./bezier').bezierByTime;
 
-var binarySearch = require('../core/utils/binary-search').binarySearchEpsilon;
-var WrapModeMask = require('./types').WrapModeMask;
-var WrappedInfo = require('./types').WrappedInfo;
+const binarySearch = require('../core/utils/binary-search').binarySearchEpsilon;
+const WrapModeMask = require('./types').WrapModeMask;
+const WrappedInfo = require('./types').WrappedInfo;
 
 /**
  * Compute a new ratio by curve type
  * @param {Number} ratio - The origin ratio
- * @param {Array|String} type - If it's Array, then ratio will be computed with bezierByTime. If it's string, then ratio will be computed with cc.Easing function
+ * @param {Array|String} type - If it's Array, then ratio will be computed with bezierByTime. If it's string, then ratio will be computed with cc.easing function
  */
 function computeRatioByType (ratio, type) {
     if (typeof type === 'string') {
-        var func = cc.Easing[type];
+        var func = cc.easing[type];
         if (func) {
             ratio = func(ratio);
         }
@@ -86,7 +86,7 @@ function quickFindIndex (ratios, ratio) {
     if (ratio < start) return 0;
 
     var end = ratios[length];
-    if (ratio > end) return length;
+    if (ratio > end) return ~ratios.length;
 
     ratio = (ratio - start) / (end - start);
 
@@ -114,6 +114,11 @@ function quickFindIndex (ratios, ratio) {
 var DynamicAnimCurve = cc.Class({
     name: 'cc.DynamicAnimCurve',
     extends: AnimCurve,
+
+    ctor () {
+        // cache last frame index
+        this._cachedIndex = 0;
+    },
 
     properties: {
 
@@ -143,26 +148,70 @@ var DynamicAnimCurve = cc.Class({
         // - [x, x, x, x]: Four control points for bezier
         // - null: linear
         types: [],
-
-        // @property {string[]} subProps - The path of sub property being animated.
-        subProps: null
     },
 
     _findFrameIndex: binarySearch,
+    _lerp: undefined,
 
-    sample: function (time, ratio, state) {
-        var values = this.values;
-        var ratios = this.ratios;
-        var frameCount = ratios.length;
+    _lerpNumber (from, to, t) {
+        return from + (to - from) * t;
+    },
+
+    _lerpObject (from, to, t) {
+        return from.lerp(to, t);
+    },
+
+    _lerpQuat: (function () {
+        let out = cc.quat();
+        return function (from, to, t) {
+            return from.lerp(to, t, out);
+        };
+    })(),
+
+    _lerpVector2: (function () {
+        let out = cc.v2();
+        return function (from, to, t) {
+            return from.lerp(to, t, out);
+        };
+    })(),
+
+    _lerpVector3: (function () {
+        let out = cc.v3();
+        return function (from, to, t) {
+            return from.lerp(to, t, out);
+        };
+    })(),
+
+    sample (time, ratio, state) {
+        let values = this.values;
+        let ratios = this.ratios;
+        let frameCount = ratios.length;
 
         if (frameCount === 0) {
             return;
         }
 
-        // evaluate value
-        var value;
-        var index = this._findFrameIndex(ratios, ratio);
+        // only need to refind frame index when ratio is out of range of last from ratio and to ratio.
+        let shoudRefind = true;
+        let cachedIndex = this._cachedIndex;
+        if (cachedIndex < 0) {
+            cachedIndex = ~cachedIndex;
+            if (cachedIndex > 0 && cachedIndex < ratios.length) {
+                let fromRatio = ratios[cachedIndex - 1];
+                let toRatio = ratios[cachedIndex];
+                if (ratio > fromRatio && ratio < toRatio) {
+                    shoudRefind = false;
+                }
+            }
+        }
 
+        if (shoudRefind) {
+            this._cachedIndex = this._findFrameIndex(ratios, ratio);
+        }
+
+        // evaluate value
+        let value;
+        let index = this._cachedIndex;
         if (index < 0) {
             index = ~index;
 
@@ -175,10 +224,7 @@ var DynamicAnimCurve = cc.Class({
             else {
                 var fromVal = values[index - 1];
 
-                var isNumber = typeof fromVal === 'number';
-                var canLerp = fromVal && fromVal.lerp;
-
-                if (!isNumber && !canLerp) {
+                if (!this._lerp) {
                     value = fromVal;
                 }
                 else {
@@ -194,13 +240,7 @@ var DynamicAnimCurve = cc.Class({
                     // calculate value
                     var toVal = values[index];
 
-                    // lerp
-                    if (isNumber) {
-                        value = fromVal + (toVal - fromVal) * ratioBetweenFrames;
-                    }
-                    else if (canLerp) {
-                        value = fromVal.lerp(toVal, ratioBetweenFrames);
-                    }
+                    value = this._lerp(fromVal, toVal, ratioBetweenFrames);
                 }
             }
         }
@@ -208,35 +248,6 @@ var DynamicAnimCurve = cc.Class({
             value = values[index];
         }
 
-        var subProps = this.subProps;
-        if (subProps) {
-            // create batched value dynamically
-            var mainProp = this.target[this.prop];
-            var subProp = mainProp;
-
-            for (var i = 0; i < subProps.length - 1; i++) {
-                var subPropName = subProps[i];
-                if (subProp) {
-                    subProp = subProp[subPropName];
-                }
-                else {
-                    return;
-                }
-            }
-
-            var propName = subProps[subProps.length - 1];
-
-            if (subProp) {
-                subProp[propName] = value;
-            }
-            else {
-                return;
-            }
-
-            value = mainProp;
-        }
-
-        // apply value
         this.target[this.prop] = value;
     }
 });
@@ -245,7 +256,6 @@ DynamicAnimCurve.Linear = null;
 DynamicAnimCurve.Bezier = function (controlPoints) {
     return controlPoints;
 };
-
 
 
 /**

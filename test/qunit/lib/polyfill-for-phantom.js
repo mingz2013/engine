@@ -1,7 +1,16 @@
+
+// These implements are very slow and not intended for use in a production environment.
+
 if (typeof CustomEvent === 'undefined') {
     CustomEvent = function () {
 
     }
+}
+
+if (typeof Symbol === 'undefined') {
+    Symbol = function () {
+        return Object.create(null);
+    };
 }
 
 if (typeof Set === 'undefined') {
@@ -14,6 +23,39 @@ if (typeof Set === 'undefined') {
     };
     Set.prototype.add = function (value) {
         this.values.push(value);
+    };
+}
+
+if (typeof Map === 'undefined') {
+    // very simple polyfill
+    Map = function () {
+        this._keys = [];
+        this._values = [];
+    };
+    Map.prototype.has = function (key) {
+        return this._keys.includes(key);
+    };
+    Map.prototype.get = function (key) {
+        var index = this._keys.indexOf(key);
+        if (index !== -1) {
+            return this._values[index];
+        }
+        else {
+            return undefined;
+        }
+    };
+    Map.prototype.set = function (key, value) {
+        var index = this._keys.indexOf(key);
+        if (index === -1) {
+            this._keys.push(key);
+            this._values.push(value);
+        }
+        else {
+            this._values[index] = value;
+        }
+    };
+    Map.prototype.values = function () {
+        return this._values;
     };
 }
 
@@ -57,13 +99,6 @@ if (!Function.prototype.bind) {
         return fBound;
     };
 }
-
-//if (!Array.prototype.includes) {
-//    // This will break test-node-serialization.js
-//    Array.prototype.includes = function (value) {
-//        return this.indexOf(value) !== -1;
-//    };
-//}
 
 var isPhantomJS = window.navigator.userAgent.indexOf('PhantomJS') !== -1;
 if (isPhantomJS) {
@@ -151,6 +186,23 @@ if (!Object.assign) {
             return to;
         }
     });
+
+    if (!Object.getOwnPropertyDescriptors) {
+        Object.defineProperty(Object, 'getOwnPropertyDescriptors', {
+            enumerable: false,
+            configurable: true,
+            writable: true,
+            value: function (target) {
+                var res = {};
+                var props = Object.getOwnPropertyNames(target);
+                for (var i = 0; i < props.length; i++) {
+                    var name = props[i];
+                    res[name] = Object.getOwnPropertyDescriptor(target, name);
+                }
+                return res;
+            }
+        });
+    }
 }
 
 if (!Object.getOwnPropertyDescriptors) {
@@ -175,3 +227,28 @@ if (!Object.getOwnPropertySymbols) {
         return [];
     };
 }
+
+Number.parseFloat = Number.parseFloat || parseFloat;
+Number.parseInt = Number.parseInt || parseInt;
+
+Array.from = Array.from || function (obj) {
+    var array = new Array(obj.length);
+    for (var i = 0; i < obj.length; ++i) {
+        array[i] = obj[i];
+    }
+    return array;
+};
+
+Array.prototype.fill = Array.prototype.fill || function (value) {
+    var res = new Array(this.length);
+    for (var i = 0; i < this.length; ++i) {
+        res[i] = value;
+    }
+    return res;
+};
+
+Float64Array.name = 'Float64Array';
+Float32Array.name = 'Float32Array';
+Uint32Array.name = 'Uint32Array';
+Int32Array.name = 'Int32Array';
+Uint8Array.name = 'Uint8Array';

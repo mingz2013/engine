@@ -24,17 +24,19 @@
  THE SOFTWARE.
  ****************************************************************************/
 
+import gfx from '../../renderer/gfx';
+
 const misc = require('../utils/misc');
-const renderEngine = require('../renderer/render-engine');
-const math = renderEngine.math;
-const Material = require('../assets/CCMaterial');
 const RenderComponent = require('./CCRenderComponent');
 const RenderFlow = require('../renderer/render-flow');
 const Graphics = require('../graphics/graphics');
-const Node = require('../CCNode');
 
-let _vec2_temp = cc.v2();
-let _mat4_temp = math.mat4.create();
+import Mat4 from '../value-types/mat4';
+import Vec2 from '../value-types/vec2';
+import MaterialVariant from '../assets/material/material-variant';
+
+let _vec2_temp = new Vec2();
+let _mat4_temp = new Mat4();
 
 let _circlepoints =[];
 function _calculateCircle (center, radius, segements) {
@@ -95,7 +97,10 @@ let Mask = cc.Class({
 
     ctor () {
         this._graphics = null;
-        this._clearGraphics = null;
+
+        this._enableMaterial = null;
+        this._exitMaterial = null;
+        this._clearMaterial = null;
     },
 
     properties: {
@@ -118,16 +123,17 @@ let Mask = cc.Class({
                 return this._type;
             },
             set: function (value) {
+                if (this._type !== value) {
+                    this._resetAssembler();
+                }
+
                 this._type = value;
                 if (this._type !== MaskType.IMAGE_STENCIL) {
                     this.spriteFrame = null;
                     this.alphaThreshold = 0;
                     this._updateGraphics();
                 }
-                if (this._renderData) {
-                    this.destroyRenderData(this._renderData);
-                    this._renderData = null;
-                }
+                
                 this._activateMaterial();
             },
             type: MaskType,
@@ -162,7 +168,9 @@ let Mask = cc.Class({
                     }
                 }
                 this._spriteFrame = value;
-                this._applySpriteFrame(lastSprite);
+                
+                this.setVertsDirty();
+                this._updateMaterial();
             },
         },
 
@@ -171,20 +179,19 @@ let Mask = cc.Class({
          * The alpha threshold.(Not supported Canvas Mode) <br/>
          * The content is drawn only where the stencil have pixel with alpha greater than the alphaThreshold. <br/>
          * Should be a float between 0 and 1. <br/>
-         * This default to 0 (so alpha test is disabled).
-         * When it's set to 1, the stencil will discard all pixels, nothing will be shown,
-         * In previous version, it act as if the alpha test is disabled, which is incorrect.
+         * This default to 0.1.
+         * When it's set to 1, the stencil will discard all pixels, nothing will be shown.
          * !#zh
          * Alpha 阈值（不支持 Canvas 模式）<br/>
-         * 只有当模板的像素的 alpha 大于 alphaThreshold 时，才会绘制内容。<br/>
-         * 该数值 0 ~ 1 之间的浮点数，默认值为 0（因此禁用 alpha 测试）
-         * 当被设置为 1 时，会丢弃所有蒙版像素，所以不会显示任何内容，在之前的版本中，设置为 1 等同于 0，这种效果其实是不正确的
+         * 只有当模板的像素的 alpha 大于等于 alphaThreshold 时，才会绘制内容。<br/>
+         * 该数值 0 ~ 1 之间的浮点数，默认值为 0.1
+         * 当被设置为 1 时，会丢弃所有蒙版像素，所以不会显示任何内容
          * @property alphaThreshold
          * @type {Number}
-         * @default 0
+         * @default 0.1
          */
         alphaThreshold: {
-            default: 0,
+            default: 0.1,
             type: cc.Float,
             range: [0, 1, 0.1],
             slide: true,
@@ -194,11 +201,7 @@ let Mask = cc.Class({
                     cc.warnID(4201);
                     return;
                 }
-                let material = this.sharedMaterials[0];
-                if (material) {
-                    material.alphaThreshold = this.alphaThreshold;
-                    material.updateHash();
-                }
+                this._updateMaterial();
             }
         },
 
@@ -216,7 +219,6 @@ let Mask = cc.Class({
             notify: function () {
                 if (cc.game.renderType === cc.game.RENDER_TYPE_CANVAS) {
                     cc.warnID(4202);
-                    return;
                 }
             }
         },
@@ -256,30 +258,13 @@ let Mask = cc.Class({
         Type: MaskType,
     },
 
-    onLoad () {
-        this._createGraphics();
-    },
-
     onRestore () {
-        this._createGraphics();
-        if (this._type !== MaskType.IMAGE_STENCIL) {
-            this._updateGraphics();
-        }
+        this._activateMaterial();
     },
 
     onEnable () {
         this._super();
-        if (this._type === MaskType.IMAGE_STENCIL) {
-            if (!this._spriteFrame || !this._spriteFrame.textureLoaded()) {
-                // Do not render when sprite frame is not ready
-                this.markForRender(false);
-                if (this._spriteFrame) {
-                    this._spriteFrame.once('load', this._onTextureLoaded, this);
-                    this._spriteFrame.ensureLoadTexture();
-                }
-            }
-        }
-        else {
+        if (this._type !== MaskType.IMAGE_STENCIL) {
             this._updateGraphics();
         }
 
@@ -288,9 +273,6 @@ let Mask = cc.Class({
         this.node.on(cc.Node.EventType.SCALE_CHANGED, this._updateGraphics, this);
         this.node.on(cc.Node.EventType.SIZE_CHANGED, this._updateGraphics, this);
         this.node.on(cc.Node.EventType.ANCHOR_CHANGED, this._updateGraphics, this);
-
-        this.node._renderFlag |= RenderFlow.FLAG_POST_RENDER;
-        this._activateMaterial();
     },
 
     onDisable () {
@@ -301,7 +283,7 @@ let Mask = cc.Class({
         this.node.off(cc.Node.EventType.SCALE_CHANGED, this._updateGraphics, this);
         this.node.off(cc.Node.EventType.SIZE_CHANGED, this._updateGraphics, this);
         this.node.off(cc.Node.EventType.ANCHOR_CHANGED, this._updateGraphics, this);
-
+        
         this.node._renderFlag &= ~RenderFlow.FLAG_POST_RENDER;
     },
 
@@ -317,88 +299,80 @@ let Mask = cc.Class({
         }
     },
 
-    _onTextureLoaded () {
-        // Mark render data dirty
-        if (this._renderData) {
-            this._renderData.uvDirty = true;
-            this._renderData.vertDirty = true;
-            this.markForUpdateRenderData(true);
-        }
-        // Reactivate material
-        if (this.enabledInHierarchy) {
-            this._activateMaterial();
-        }
-    },
+    _validateRender () {
+        if (this._type !== MaskType.IMAGE_STENCIL) return;
 
-    _applySpriteFrame (oldFrame) {
-        if (oldFrame && oldFrame.off) {
-            oldFrame.off('load', this._onTextureLoaded, this);
-        }
         let spriteFrame = this._spriteFrame;
-        if (spriteFrame) {
-            if (spriteFrame.textureLoaded()) {
-                this._onTextureLoaded(null);
-            }
-            else {
-                spriteFrame.once('load', this._onTextureLoaded, this);
-                spriteFrame.ensureLoadTexture();
-            }
-        }
-    },
-
-    _activateMaterial () {
-        // cannot be activated if texture not loaded yet
-        if (this._type === MaskType.IMAGE_STENCIL && (!this.spriteFrame || !this.spriteFrame.textureLoaded())) {
-            this.markForRender(false);
+        if (spriteFrame && 
+            spriteFrame.textureLoaded()) {
             return;
         }
 
-        // WebGL
-        if (cc.game.renderType !== cc.game.RENDER_TYPE_CANVAS) {
-            // Init material
-            let material = this.sharedMaterials[0];
-            if (!material) {
-                material = Material.getInstantiatedBuiltinMaterial('sprite', this);
-                material.define('alphaTest', true);
-            }
+        this.disableRender();
+    },
 
-            // Reset material
-            if (this._type === MaskType.IMAGE_STENCIL) {
-                let texture = this.spriteFrame.getTexture();
-                material.define('useModel', false);
-                material.define('useTexture', true);
-                material.define('useColor', true);
-
-                material.setProperty('texture', texture);
-                material.setProperty('alphaThreshold', this.alphaThreshold);
-            }
-            else {
-                material.define('useModel', true);
-                material.define('useTexture', false);
-                material.define('useColor', false);
-            }
-
-            this.setMaterial(0, material);
+    _activateMaterial () {
+        this._createGraphics();
+        
+        // Init material
+        let material = this._materials[0];
+        if (!material) {
+            material = MaterialVariant.createWithBuiltin('2d-sprite', this);
+        }
+        else {
+            material = MaterialVariant.create(material, this);
         }
 
-        this.markForRender(true);
+        material.define('USE_ALPHA_TEST', true);
+
+        // Reset material
+        if (this._type === MaskType.IMAGE_STENCIL) {
+            material.define('CC_USE_MODEL', false);
+            material.define('USE_TEXTURE', true);
+        }
+        else {
+            material.define('CC_USE_MODEL', true);
+            material.define('USE_TEXTURE', false);
+        }
+
+        if (!this._enableMaterial) {
+            this._enableMaterial = MaterialVariant.createWithBuiltin('2d-sprite', this);
+        }
+    
+        if (!this._exitMaterial) {
+            this._exitMaterial = MaterialVariant.createWithBuiltin('2d-sprite', this);
+            this._exitMaterial.setStencilEnabled(gfx.STENCIL_DISABLE);
+        }
+
+        if (!this._clearMaterial) {
+            this._clearMaterial = MaterialVariant.createWithBuiltin('clear-stencil', this);
+        }
+
+        this.setMaterial(0, material);
+
+        this._graphics._materials[0] = material;
+
+        this._updateMaterial();
+    },
+
+    _updateMaterial () {
+        let material = this._materials[0];
+        if (!material) return;
+
+        if (this._type === MaskType.IMAGE_STENCIL && this.spriteFrame) {
+            let texture = this.spriteFrame.getTexture();
+            material.setProperty('texture', texture);
+        }
+        material.setProperty('alphaThreshold', this.alphaThreshold);
     },
 
     _createGraphics () {
         if (!this._graphics) {
             this._graphics = new Graphics();
+            cc.Assembler.init(this._graphics);
             this._graphics.node = this.node;
             this._graphics.lineWidth = 0;
             this._graphics.strokeColor = cc.color(0, 0, 0, 0);
-        }
-
-        if (!this._clearGraphics) {
-            this._clearGraphics = new Graphics();
-            this._clearGraphics.node = new Node();
-            this._clearGraphics._activateMaterial();
-            this._clearGraphics.lineWidth = 0;
-            this._clearGraphics.rect(0, 0, cc.visibleRect.width, cc.visibleRect.height);
-            this._clearGraphics.fill();
         }
     },
 
@@ -443,10 +417,8 @@ let Mask = cc.Class({
     _removeGraphics () {
         if (this._graphics) {
             this._graphics.destroy();
-        }
-
-        if (this._clearGraphics) {
-            this._clearGraphics.destroy();
+            this._graphics._destroyImmediate(); // FIX: cocos-creator/2d-tasks#2511. TODO: cocos-creator/2d-tasks#2516
+            this._graphics = null;
         }
     },
 
@@ -458,37 +430,37 @@ let Mask = cc.Class({
             testPt = _vec2_temp;
         
         node._updateWorldMatrix();
-        math.mat4.invert(_mat4_temp, node._worldMatrix);
-        math.vec2.transformMat4(testPt, cameraPt, _mat4_temp);
+        // If scale is 0, it can't be hit.
+        if (!Mat4.invert(_mat4_temp, node._worldMatrix)) {
+            return false;
+        }
+        Vec2.transformMat4(testPt, cameraPt, _mat4_temp);
         testPt.x += node._anchorPoint.x * w;
         testPt.y += node._anchorPoint.y * h;
 
+        let result = false;
         if (this.type === MaskType.RECT || this.type === MaskType.IMAGE_STENCIL) {
-            return testPt.x >= 0 && testPt.y >= 0 && testPt.x <= w && testPt.y <= h;
+            result = testPt.x >= 0 && testPt.y >= 0 && testPt.x <= w && testPt.y <= h;
         }
         else if (this.type === MaskType.ELLIPSE) {
             let rx = w / 2, ry = h / 2;
             let px = testPt.x - 0.5 * w, py = testPt.y - 0.5 * h;
-            return px * px / (rx * rx) + py * py / (ry * ry) < 1;
+            result = px * px / (rx * rx) + py * py / (ry * ry) < 1;
         }
-    },
-
-    markForUpdateRenderData (enable) {
-        if (enable && this.enabledInHierarchy) {
-            this.node._renderFlag |= RenderFlow.FLAG_UPDATE_RENDER_DATA;
+        if (this.inverted) {
+            result = !result;
         }
-        else if (!enable) {
-            this.node._renderFlag &= ~RenderFlow.FLAG_UPDATE_RENDER_DATA;
-        }
+        return result;
     },
 
     markForRender (enable) {
-        if (enable && this.enabledInHierarchy) {
-            this.node._renderFlag |= (RenderFlow.FLAG_RENDER | RenderFlow.FLAG_UPDATE_RENDER_DATA | 
-                                      RenderFlow.FLAG_POST_RENDER);
+        let flag = RenderFlow.FLAG_RENDER | RenderFlow.FLAG_UPDATE_RENDER_DATA | RenderFlow.FLAG_POST_RENDER;
+        if (enable) {
+            this.node._renderFlag |= flag;
+            this.markForValidate();
         }
         else if (!enable) {
-            this.node._renderFlag &= ~(RenderFlow.FLAG_RENDER | RenderFlow.FLAG_POST_RENDER);
+            this.node._renderFlag &= ~flag;
         }
     },
 

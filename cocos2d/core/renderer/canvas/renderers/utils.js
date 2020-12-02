@@ -27,9 +27,6 @@ const WHITE = (255<<16) + (255<<8) + 255;
 const MAX_CANVAS_COUNT = 32;
 
 function colorizedFrame (canvas, texture, color, sx, sy, sw, sh) {
-    if (cc.sys.browserType === cc.sys.BROWSER_TYPE_WECHAT_GAME_SUB) {
-        return canvas;
-    }
     let image = texture._image;
 
     let ctx = canvas.getContext("2d");
@@ -119,7 +116,7 @@ module.exports = {
         }
 
         // get from cache
-        let key = texture.url + cval;
+        let key = texture.nativeUrl + cval;
         let cache = canvasMgr.getCanvas(key);
         if (!cache) {
             cache = canvasMgr.canvasPool.pop() || document.createElement("canvas");
@@ -130,11 +127,11 @@ module.exports = {
     },
 
     getFrameCache (texture, color, sx, sy, sw, sh) {
-        if (!texture || !texture.url || sx < 0 || sy < 0 || sw <= 0 || sh <= 0) {
+        if (!texture || !texture.nativeUrl || sx < 0 || sy < 0 || sw <= 0 || sh <= 0) {
             return null;
         }
 
-        let key = texture.url;
+        let key = texture.nativeUrl;
         let generate = false;
         let cval = color._val & 0x00ffffff;
         if (cval !== WHITE) {
@@ -160,7 +157,27 @@ module.exports = {
     },
 
     dropColorizedImage (texture, color) {
-        let key = texture.url + (color._val & 0x00ffffff);
+        let key = texture.nativeUrl + (color._val & 0x00ffffff);
         canvasMgr.dropImage(key);
     }
 };
+
+// cache context data of device.
+let _globalAlpha = -1;
+
+let context = {
+    setGlobalAlpha (ctx, alpha) {
+        if (_globalAlpha === alpha) {
+            return 
+        }
+
+        _globalAlpha = alpha;
+        ctx.globalAlpha = _globalAlpha;
+    },
+
+    reset () {
+        _globalAlpha = -1;
+    }
+}
+
+module.exports.context = context;

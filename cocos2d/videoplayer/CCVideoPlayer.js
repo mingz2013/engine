@@ -91,8 +91,8 @@ const ResourceType = cc.Enum({
 
 
 /**
- * !#en cc.VideoPlayer is a component for playing videos, you can use it for showing videos in your game.
- * !#zh Video 组件，用于在游戏中播放视频
+ * !#en cc.VideoPlayer is a component for playing videos, you can use it for showing videos in your game. Because different platforms have different authorization, API and control methods for VideoPlayer component. And have not yet formed a unified standard, only Web, iOS, and Android platforms are currently supported.
+ * !#zh Video 组件，用于在游戏中播放视频。由于不同平台对于 VideoPlayer 组件的授权、API、控制方式都不同，还没有形成统一的标准，所以目前只支持 Web、iOS 和 Android 平台。
  * @class VideoPlayer
  * @extends Component
  */
@@ -181,6 +181,16 @@ let VideoPlayer = cc.Class({
             },
             get: function () {
                 if (this._impl) {
+                    // for used to make the current time of each platform consistent
+                    if (this._currentStatus === EventType.NONE ||
+                        this._currentStatus === EventType.STOPPED ||
+                        this._currentStatus === EventType.META_LOADED ||
+                        this._currentStatus === EventType.READY_TO_PLAY) {
+                        return 0;
+                    }
+                    else if (this._currentStatus === EventType.COMPLETED) {
+                        return this._impl.duration();
+                    }
                     return this._impl.currentTime();
                 }
                 return -1;
@@ -233,13 +243,15 @@ let VideoPlayer = cc.Class({
          * !#en Whether keep the aspect ration of the original video.
          * !#zh 是否保持视频原来的宽高比
          * @property {Boolean} keepAspectRatio
+         * @type {Boolean}
+         * @default true
          */
         keepAspectRatio: {
             tooltip: CC_DEV && 'i18n:COMPONENT.videoplayer.keepAspectRatio',
             default: true,
             type: cc.Boolean,
             notify: function () {
-                this._impl.setKeepAspectRatioEnabled(this.keepAspectRatio);
+                this._impl && this._impl.setKeepAspectRatioEnabled(this.keepAspectRatio);
             }
         },
 
@@ -247,14 +259,48 @@ let VideoPlayer = cc.Class({
          * !#en Whether play video in fullscreen mode.
          * !#zh 是否全屏播放视频
          * @property {Boolean} isFullscreen
+         * @type {Boolean}
+         * @default false
          */
-        isFullscreen: {
-            tooltip: CC_DEV && 'i18n:COMPONENT.videoplayer.isFullscreen',
+        _isFullscreen: {
             default: false,
-            type: cc.Boolean,
-            notify: function () {
-                this._impl.setFullScreenEnabled(this.isFullscreen);
-            }
+            formerlySerializedAs: '_N$isFullscreen',
+        },
+        isFullscreen: {
+            get () {
+                if (!CC_EDITOR) {
+                    this._isFullscreen = this._impl && this._impl.isFullScreenEnabled();
+                }
+                return this._isFullscreen;
+            },
+            set (enable) {
+                this._isFullscreen = enable;
+                if (!CC_EDITOR) {
+                    this._impl && this._impl.setFullScreenEnabled(enable);
+                }
+            },
+            animatable: false,
+            tooltip: CC_DEV && 'i18n:COMPONENT.videoplayer.isFullscreen'
+        },
+
+        /**
+         * !#en Always below the game view (only useful on Web. Note: The specific effects are not guaranteed to be consistent, depending on whether each browser supports or restricts).
+         * !#zh 永远在游戏视图最底层（这个属性只有在 Web 平台上有效果。注意：具体效果无法保证一致，跟各个浏览器是否支持与限制有关）
+         * @property {Boolean} stayOnBottom
+         */
+        _stayOnBottom: false,
+        stayOnBottom: {
+            get () {
+                return this._stayOnBottom
+            },
+            set (enable) {
+                this._stayOnBottom = enable;
+                if (this._impl) {
+                    this._impl.setStayOnBottom(enable);
+                }
+            },
+            animatable: false,
+            tooltip: CC_DEV && 'i18n:COMPONENT.videoplayer.stayOnBottom',
         },
 
         /**
@@ -276,6 +322,7 @@ let VideoPlayer = cc.Class({
 
     ctor () {
         this._impl = new VideoPlayerImpl();
+        this._currentStatus = EventType.NONE;
     },
 
     _syncVolume () {
@@ -292,26 +339,24 @@ let VideoPlayer = cc.Class({
             url = this.remoteURL;
         }
         else if (this._clip) {
-            url = this._clip.nativeUrl || '';
+            url = this._clip.nativeUrl;
         }
-        if (url && cc.loader.md5Pipe) {
-            url = cc.loader.md5Pipe.transformURL(url);
-        }
-        this._impl.setURL(url);
+        this._impl.setURL(url, this._mute || this._volume === 0);
+        this._impl.setKeepAspectRatioEnabled(this.keepAspectRatio);
     },
 
     onLoad () {
         let impl = this._impl;
         if (impl) {
-            impl.createDomElementIfNeeded();
+            impl.createDomElementIfNeeded(this._mute || this._volume === 0);
+            impl.setStayOnBottom(this._stayOnBottom);
             this._updateVideoSource();
 
-            impl.seekTo(this.currentTime);
-            impl.setKeepAspectRatioEnabled(this.keepAspectRatio);
-            impl.setFullScreenEnabled(this.isFullscreen);
-            this.pause();
-
             if (!CC_EDITOR) {
+                impl.seekTo(this.currentTime);
+                impl.setFullScreenEnabled(this._isFullscreen);
+                this.pause();
+
                 impl.setEventListener(EventType.PLAYING, this.onPlaying.bind(this));
                 impl.setEventListener(EventType.PAUSED, this.onPasued.bind(this));
                 impl.setEventListener(EventType.STOPPED, this.onStopped.bind(this));
@@ -355,36 +400,43 @@ let VideoPlayer = cc.Class({
     },
 
     onReadyToPlay () {
+        this._currentStatus = EventType.READY_TO_PLAY;
         cc.Component.EventHandler.emitEvents(this.videoPlayerEvent, this, EventType.READY_TO_PLAY);
         this.node.emit('ready-to-play', this);
     },
 
     onMetaLoaded () {
+        this._currentStatus = EventType.META_LOADED;
         cc.Component.EventHandler.emitEvents(this.videoPlayerEvent, this, EventType.META_LOADED);
         this.node.emit('meta-loaded', this);
     },
 
     onClicked () {
+        this._currentStatus = EventType.CLICKED;
         cc.Component.EventHandler.emitEvents(this.videoPlayerEvent, this, EventType.CLICKED);
         this.node.emit('clicked', this);
     },
 
     onPlaying () {
+        this._currentStatus = EventType.PLAYING;
         cc.Component.EventHandler.emitEvents(this.videoPlayerEvent, this, EventType.PLAYING);
         this.node.emit('playing', this);
     },
 
     onPasued () {
+        this._currentStatus = EventType.PAUSED;
         cc.Component.EventHandler.emitEvents(this.videoPlayerEvent, this, EventType.PAUSED);
         this.node.emit('paused', this);
     },
 
     onStopped () {
+        this._currentStatus = EventType.STOPPED;
         cc.Component.EventHandler.emitEvents(this.videoPlayerEvent, this, EventType.STOPPED);
         this.node.emit('stopped', this);
     },
 
     onCompleted () {
+        this._currentStatus = EventType.COMPLETED;
         cc.Component.EventHandler.emitEvents(this.videoPlayerEvent, this, EventType.COMPLETED);
         this.node.emit('completed', this);
     },

@@ -23,16 +23,19 @@
  THE SOFTWARE.
  ****************************************************************************/
 
-const macro = require('../../../platform/CCMacro');
-const textUtils = require('../../../utils/text-utils');
+import Assembler2D from '../../assembler-2d';
 
-const Component = require('../../../components/CCComponent');
+let textUtils = require('../../../utils/text-utils');
+const macro = require('../../../platform/CCMacro');
 const Label = require('../../../components/CCLabel');
 const LabelOutline = require('../../../components/CCLabelOutline');
+const LabelShadow = require('../../../components/CCLabelShadow');
 const Overflow = Label.Overflow;
+const deleteFromDynamicAtlas = require('../utils').deleteFromDynamicAtlas;
+const getFontFamily = require('../utils').getFontFamily;
 
-const WHITE = cc.Color.WHITE;
-const OUTLINE_SUPPORTED = cc.js.isChildClassOf(LabelOutline, Component);
+const MAX_SIZE = 2048;
+const _invisibleAlpha = (1 / 255).toFixed(3);
 
 let _context = null;
 let _canvas = null;
@@ -41,9 +44,9 @@ let _texture = null;
 let _fontDesc = '';
 let _string = '';
 let _fontSize = 0;
-let _drawFontsize = 0;
+let _drawFontSize = 0;
 let _splitedStrings = [];
-let _canvasSize = cc.size();
+let _canvasSize = cc.Size.ZERO;
 let _lineHeight = 0;
 let _hAlign = 0;
 let _vAlign = 0;
@@ -51,138 +54,130 @@ let _color = null;
 let _fontFamily = '';
 let _overflow = Overflow.NONE;
 let _isWrapText = false;
+let _premultiply = false;
 
 // outline
-let _isOutlined = false;
-let _outlineColor = null;
-let _outlineWidth = 0;
-let _margin = 0;
+let _outlineComp = null;
+let _outlineColor = cc.Color.WHITE;
 
-let _isBold = false;
-let _isItalic = false;
-let _isUnderline = false;
+// shadow
+let _shadowComp = null;
+let _shadowColor = cc.Color.BLACK;
+
+let _canvasPadding = cc.rect();
+let _contentSizeExtend = cc.Size.ZERO;
+let _nodeContentSize = cc.Size.ZERO;
+
+let _enableBold = false;
+let _enableItalic = false;
+let _enableUnderline = false;
+let _underlineThickness = 0;
+
+let _drawUnderlinePos = cc.Vec2.ZERO;
+let _drawUnderlineWidth = 0;
 
 let _sharedLabelData;
 
-//
-let _canvasPool = {
-    pool: [],
-    get () {
-        let data = this.pool.pop();
+const Alignment = [
+    'left', // macro.TextAlignment.LEFT
+    'center', // macro.TextAlignment.CENTER
+    'right' // macro.TextAlignment.RIGHT
+];
 
-        if (!data) {
-            let canvas = document.createElement("canvas");
-            let context = canvas.getContext("2d");
-            data = {
-                canvas: canvas,
-                context: context
-            }
-        }
-
-        return data;
-    },
-    put (canvas) {
-        if (this.pool.length >= 32) {
-            return;
-        }
-        this.pool.push(canvas);
-    }
-};
-
-
-module.exports = {
-
+export default class TTFAssembler extends Assembler2D {
     _getAssemblerData () {
-        if (cc.game.renderType === cc.game.RENDER_TYPE_CANVAS) {
-            _sharedLabelData = _canvasPool.get();
-        }
-        else {
-            if (!_sharedLabelData) {
-                let labelCanvas = document.createElement("canvas");
-                _sharedLabelData = {
-                    canvas: labelCanvas,
-                    context: labelCanvas.getContext("2d")
-                };
-            }
-        }
+        _sharedLabelData = Label._canvasPool.get();
         _sharedLabelData.canvas.width = _sharedLabelData.canvas.height = 1;
         return _sharedLabelData;
-    },
+    }
 
     _resetAssemblerData (assemblerData) {
-        if (cc.game.renderType === cc.game.RENDER_TYPE_CANVAS && assemblerData) {
-            _canvasPool.put(assemblerData);
+        if (assemblerData) {
+            Label._canvasPool.put(assemblerData);
         }
-    },
+    }
 
     updateRenderData (comp) {
-        if (!comp._renderData.vertDirty) return;
+        super.updateRenderData(comp);
+        
+        if (!comp._vertsDirty) return;
 
-        this._updateFontFamily(comp);
         this._updateProperties(comp);
         this._calculateLabelFont();
-        this._calculateSplitedStrings();
         this._updateLabelDimensions();
-        this._calculateTextBaseline();
         this._updateTexture(comp);
+        this._calDynamicAtlas(comp);
 
         comp._actualFontSize = _fontSize;
-        comp.node.setContentSize(_canvasSize);
+        comp.node.setContentSize(_nodeContentSize);
 
-        this._updateVerts(comp);
+        this.updateVerts(comp);
 
-        comp._renderData.vertDirty = comp._renderData.uvDirty = false;
+        comp._vertsDirty = false;
 
         _context = null;
         _canvas = null;
         _texture = null;
-    },
+    }
 
-    _updateVerts () {
-    },
+    updateVerts () {
+    }
 
-    _updateFontFamily (comp) {
-        if (!comp.useSystemFont) {
-            if (comp.font) {
-                if (comp.font._nativeAsset) {
-                    _fontFamily = comp.font._nativeAsset;
-                }
-                else {
-                    cc.loader.load(comp.font.nativeUrl, function (err, fontFamily) {
-                        _fontFamily = fontFamily || 'Arial';
-                        comp.font._nativeAsset = fontFamily;
-                        comp._updateRenderData(true);
-                    });
-                }
-            }
-            else {
-                _fontFamily = 'Arial';
-            }
+    _updatePaddingRect () {
+        let top = 0, bottom = 0, left = 0, right = 0;
+        let outlineWidth = 0;
+        _contentSizeExtend.width = _contentSizeExtend.height = 0;
+        if (_outlineComp) {
+            outlineWidth = _outlineComp.width;
+            top = bottom = left = right = outlineWidth;
+            _contentSizeExtend.width = _contentSizeExtend.height = outlineWidth * 2;
         }
-        else {
-            _fontFamily = comp.fontFamily;
+        if (_shadowComp) {
+            let shadowWidth = _shadowComp.blur + outlineWidth;
+            left = Math.max(left, -_shadowComp._offset.x + shadowWidth);
+            right = Math.max(right, _shadowComp._offset.x + shadowWidth);
+            top = Math.max(top, _shadowComp._offset.y + shadowWidth);
+            bottom = Math.max(bottom, -_shadowComp._offset.y + shadowWidth);
         }
-    },
+        if (_enableItalic) {
+            //0.0174532925 = 3.141592653 / 180
+            let offset = _drawFontSize * Math.tan(12 * 0.0174532925);
+            right += offset;
+            _contentSizeExtend.width += offset;
+        }
+        _canvasPadding.x = left;
+        _canvasPadding.y = top;
+        _canvasPadding.width = left + right;
+        _canvasPadding.height = top + bottom;
+    }
 
     _updateProperties (comp) {
         let assemblerData = comp._assemblerData;
         _context = assemblerData.context;
         _canvas = assemblerData.canvas;
-        _texture = comp._texture;
-        
+        _texture = comp._frame._original ? comp._frame._original._texture : comp._frame._texture;
+
         _string = comp.string.toString();
         _fontSize = comp._fontSize;
-        _drawFontsize = _fontSize;
+        _drawFontSize = _fontSize;
+        _underlineThickness = comp.underlineHeight || _drawFontSize / 8;
         _overflow = comp.overflow;
         _canvasSize.width = comp.node.width;
         _canvasSize.height = comp.node.height;
+        _nodeContentSize = comp.node.getContentSize();
         _lineHeight = comp._lineHeight;
         _hAlign = comp.horizontalAlign;
         _vAlign = comp.verticalAlign;
         _color = comp.node.color;
-        _isBold = comp._isBold;
-        _isItalic = comp._isItalic;
-        _isUnderline = comp._isUnderline;
+        _enableBold = comp.enableBold;
+        _enableItalic = comp.enableItalic;
+        _enableUnderline = comp.enableUnderline;
+        _fontFamily = getFontFamily(comp);
+        _premultiply = comp.srcBlendFactor === cc.macro.BlendFactor.ONE;
+
+        if (CC_NATIVERENDERER) {
+            _context._setPremultiply(_premultiply);
+        }
 
         if (_overflow === Overflow.NONE) {
             _isWrapText = false;
@@ -195,305 +190,352 @@ module.exports = {
         }
 
         // outline
-        let outline = OUTLINE_SUPPORTED && comp.getComponent(LabelOutline);
-        if (outline && outline.enabled) {
-            _isOutlined = true;
-            _margin = _outlineWidth = outline.width;
-            _outlineColor = cc.color(outline.color);
+        _outlineComp = LabelOutline && comp.getComponent(LabelOutline);
+        _outlineComp = (_outlineComp && _outlineComp.enabled && _outlineComp.width > 0) ? _outlineComp : null;
+        if (_outlineComp) {
+            _outlineColor.set(_outlineComp.color);
+        }
+
+        // shadow
+        _shadowComp = LabelShadow && comp.getComponent(LabelShadow);
+        _shadowComp = (_shadowComp && _shadowComp.enabled) ? _shadowComp : null;
+        if (_shadowComp) {
+            _shadowColor.set(_shadowComp.color);
             // TODO: temporary solution, cascade opacity for outline color
-            _outlineColor.a = _outlineColor.a * comp.node.color.a / 255.0;
+            _shadowColor.a = _shadowColor.a * comp.node.color.a / 255.0;
         }
-        else {
-            _isOutlined = false;
-            _margin = 0;
-        }
-    },
+
+        this._updatePaddingRect();
+    }
 
     _calculateFillTextStartPosition () {
-        let lineHeight = this._getLineHeight();
-        let lineCount = _splitedStrings.length;
-        let labelX;
-        let firstLinelabelY;
-
+        let labelX = 0;
         if (_hAlign === macro.TextAlignment.RIGHT) {
-            labelX = _canvasSize.width - _margin;
-        }
-        else if (_hAlign === macro.TextAlignment.CENTER) {
-            labelX = _canvasSize.width / 2;
-        }
-        else {
-            labelX = 0 + _margin;
+            labelX = _canvasSize.width - _canvasPadding.width;
+        } else if (_hAlign === macro.TextAlignment.CENTER) {
+            labelX = (_canvasSize.width - _canvasPadding.width) / 2;
         }
 
-        if (_vAlign === macro.VerticalTextAlignment.TOP) {
-            firstLinelabelY = 0;
-        }
-        else if (_vAlign === macro.VerticalTextAlignment.CENTER) {
-            firstLinelabelY = _canvasSize.height / 2 - lineHeight * (lineCount - 1) / 2;
-        }
-        else {
-            firstLinelabelY = _canvasSize.height - lineHeight * (lineCount - 1);
+        let lineHeight = this._getLineHeight();
+        let drawStartY = lineHeight * (_splitedStrings.length - 1);
+        // TOP
+        let firstLinelabelY = _fontSize * (1 - textUtils.BASELINE_RATIO / 2);
+        if (_vAlign !== macro.VerticalTextAlignment.TOP) {
+            // free space in vertical direction
+            let blank = drawStartY + _canvasPadding.height + _fontSize - _canvasSize.height;
+            if (_vAlign === macro.VerticalTextAlignment.BOTTOM) {
+                // Unlike BMFont, needs to reserve space below.
+                blank += textUtils.BASELINE_RATIO / 2 * _fontSize;
+                // BOTTOM
+                firstLinelabelY -= blank;
+            } else {
+                // CENTER
+                firstLinelabelY -= blank / 2;
+            }
         }
 
-        return cc.v2(labelX, firstLinelabelY);
-    },
+        firstLinelabelY += textUtils.BASELINE_OFFSET * _fontSize;
+
+        return cc.v2(labelX + _canvasPadding.x, firstLinelabelY + _canvasPadding.y);
+    }
+
+    _setupOutline () {
+        _context.strokeStyle = `rgba(${_outlineColor.r}, ${_outlineColor.g}, ${_outlineColor.b}, ${_outlineColor.a / 255})`;
+        _context.lineWidth = _outlineComp.width * 2;
+    }
+
+    _setupShadow () {
+        _context.shadowColor = `rgba(${_shadowColor.r}, ${_shadowColor.g}, ${_shadowColor.b}, ${_shadowColor.a / 255})`;
+        _context.shadowBlur = _shadowComp.blur;
+        _context.shadowOffsetX = _shadowComp.offset.x;
+        _context.shadowOffsetY = -_shadowComp.offset.y;
+    }
+
+    _drawTextEffect (startPosition, lineHeight) {
+        if (!_shadowComp && !_outlineComp && !_enableUnderline) return;
+
+        let isMultiple = _splitedStrings.length > 1 && _shadowComp;
+        let measureText = this._measureText(_context, _fontDesc);
+        let drawTextPosX = 0, drawTextPosY = 0;
+
+        // only one set shadow and outline
+        if (_shadowComp) {
+            this._setupShadow();
+        }
+        
+        if (_outlineComp) {
+            this._setupOutline();
+        }
+
+        // draw shadow and (outline or text)
+        for (let i = 0; i < _splitedStrings.length; ++i) {
+            drawTextPosX = startPosition.x;
+            drawTextPosY = startPosition.y + i * lineHeight;
+            // multiple lines need to be drawn outline and fill text
+            if (isMultiple) {
+                if (_outlineComp) {
+                    _context.strokeText(_splitedStrings[i], drawTextPosX, drawTextPosY);
+                }
+                _context.fillText(_splitedStrings[i], drawTextPosX, drawTextPosY);
+            }
+
+            // draw underline
+            if (_enableUnderline) {
+                _drawUnderlineWidth = measureText(_splitedStrings[i]);
+                if (_hAlign === macro.TextAlignment.RIGHT) {
+                    _drawUnderlinePos.x = startPosition.x - _drawUnderlineWidth;
+                } else if (_hAlign === macro.TextAlignment.CENTER) {
+                    _drawUnderlinePos.x = startPosition.x - (_drawUnderlineWidth / 2);
+                } else {
+                    _drawUnderlinePos.x = startPosition.x;
+                }
+                _drawUnderlinePos.y = drawTextPosY + _drawFontSize / 8;
+                _context.fillRect(_drawUnderlinePos.x, _drawUnderlinePos.y, _drawUnderlineWidth, _underlineThickness);
+            }
+        }
+
+        if (isMultiple) {
+            _context.shadowColor = 'transparent';
+        }
+    }
 
     _updateTexture () {
         _context.clearRect(0, 0, _canvas.width, _canvas.height);
-        _context.font = _fontDesc;
+        // use round for line join to avoid sharp intersect point
+        _context.lineJoin = 'round';
+        //Add a white background to avoid black edges.
+        if (!_premultiply) {
+            //TODO: it is best to add alphaTest to filter out the background color.
+            let _fillColor = _outlineComp ? _outlineColor : _color;
+            _context.fillStyle = `rgba(${_fillColor.r}, ${_fillColor.g}, ${_fillColor.b}, ${_invisibleAlpha})`;
+            _context.fillRect(0, 0, _canvas.width, _canvas.height);
+            _context.fillStyle = `rgba(${_color.r}, ${_color.g}, ${_color.b}, 1)`;
+        } else {
+            _context.fillStyle = `rgba(${_color.r}, ${_color.g}, ${_color.b}, ${_color.a / 255.0})`;
+        }
 
         let startPosition = this._calculateFillTextStartPosition();
         let lineHeight = this._getLineHeight();
-        //use round for line join to avoid sharp intersect point
-        _context.lineJoin = 'round';
-        _context.fillStyle = `rgba(${_color.r}, ${_color.g}, ${_color.b}, ${_color.a / 255})`;
-        let underlineStartPosition;
-
-        //do real rendering
+        let drawTextPosX = startPosition.x, drawTextPosY = 0;
+        // draw shadow and underline
+        this._drawTextEffect(startPosition, lineHeight);
+        // draw text and outline
         for (let i = 0; i < _splitedStrings.length; ++i) {
-            if (_isOutlined) {
-                let strokeColor = _outlineColor || WHITE;
-                _context.strokeStyle = `rgba(${strokeColor.r}, ${strokeColor.g}, ${strokeColor.b}, ${strokeColor.a / 255})`;
-                _context.lineWidth = _outlineWidth * 2;
-                _context.strokeText(_splitedStrings[i], startPosition.x, startPosition.y + i * lineHeight);
+            drawTextPosY = startPosition.y + i * lineHeight;
+            if (_outlineComp) {
+                _context.strokeText(_splitedStrings[i], drawTextPosX, drawTextPosY);
             }
-            _context.fillText(_splitedStrings[i], startPosition.x, startPosition.y + i * lineHeight);
+            _context.fillText(_splitedStrings[i], drawTextPosX, drawTextPosY);
+        }
 
-            if (_isUnderline) {
-                underlineStartPosition = this._calculateUnderlineStartPosition();
-                _context.save();
-                _context.beginPath();
-                _context.lineWidth = _fontSize / 8;
-                _context.strokeStyle = `rgba(${_color.r}, ${_color.g}, ${_color.b}, ${_color.a / 255})`;
-                _context.moveTo(underlineStartPosition.x, underlineStartPosition.y + i * lineHeight - 1);
-                _context.lineTo(underlineStartPosition.x + _canvas.width, underlineStartPosition.y + i * lineHeight - 1);
-                _context.stroke();
-                _context.restore();
-            }
+        if (_shadowComp) {
+            _context.shadowColor = 'transparent';
         }
 
         _texture.handleLoadedTexture();
-    },
+    }
 
-    _calculateUnderlineStartPosition () {
-        let lineHeight = this._getLineHeight();
-        let lineCount = _splitedStrings.length;
-        let labelX;
-        let firstLinelabelY;
-
-        labelX = 0 + _margin;
-
-        if (_vAlign === macro.VerticalTextAlignment.TOP) {
-            firstLinelabelY = _fontSize;
+    _calDynamicAtlas (comp) {
+        if(comp.cacheMode !== Label.CacheMode.BITMAP) return;
+        let frame = comp._frame;
+        // Delete cache in atlas.
+        deleteFromDynamicAtlas(comp, frame);
+        if (!frame._original) {
+            frame.setRect(cc.rect(0, 0, _canvas.width, _canvas.height));
         }
-        else if (_vAlign === macro.VerticalTextAlignment.CENTER) {
-            firstLinelabelY = _canvasSize.height / 2 - lineHeight * (lineCount - 1) / 2 + _fontSize / 2;
-        }
-        else {
-            firstLinelabelY = _canvasSize.height - lineHeight * (lineCount - 1);
-        }
-
-        return cc.v2(labelX, firstLinelabelY);
-    },
+        this.packToDynamicAtlas(comp, frame);
+    }
 
     _updateLabelDimensions () {
-        let paragraphedStrings = _string.split('\n');
+        _canvasSize.width = Math.min(_canvasSize.width, MAX_SIZE);
+        _canvasSize.height = Math.min(_canvasSize.height, MAX_SIZE);
 
-        if (_overflow === Overflow.RESIZE_HEIGHT) {
-            _canvasSize.height = _splitedStrings.length * this._getLineHeight();
-        }
-        else if (_overflow === Overflow.NONE) {
-            _splitedStrings = paragraphedStrings;
-            let canvasSizeX = 0;
-            let canvasSizeY = 0;
-            for (let i = 0; i < paragraphedStrings.length; ++i) {
-                let paraLength = textUtils.safeMeasureText(_context, paragraphedStrings[i]);
-                canvasSizeX = canvasSizeX > paraLength ? canvasSizeX : paraLength;
-            }
-            canvasSizeY = _splitedStrings.length * this._getLineHeight();
-
-            _canvasSize.width = parseFloat(canvasSizeX.toFixed(2)) + 2 * _margin;
-            _canvasSize.height = parseFloat(canvasSizeY.toFixed(2));
-            if (_isItalic) {
-                //0.0174532925 = 3.141592653 / 180
-                _canvasSize.width += _drawFontsize * Math.tan(12 * 0.0174532925);
-            }
+        let recreate = false;
+        if (_canvas.width !== _canvasSize.width) {
+            _canvas.width = _canvasSize.width;
+            recreate = true
         }
 
-        _canvas.width = _canvasSize.width;
-        _canvas.height = _canvasSize.height;
-    },
-
-    _calculateTextBaseline () {
-        let node = this._node;
-        let hAlign;
-        let vAlign;
-
-        if (_hAlign === macro.TextAlignment.RIGHT) {
-            hAlign = 'right';
-        }
-        else if (_hAlign === macro.TextAlignment.CENTER) {
-            hAlign = 'center';
-        }
-        else {
-            hAlign = 'left';
-        }
-        _context.textAlign = hAlign;
-
-        if (_vAlign === macro.VerticalTextAlignment.TOP) {
-            vAlign = 'top';
-        }
-        else if (_vAlign === macro.VerticalTextAlignment.CENTER) {
-            vAlign = 'middle';
-        }
-        else {
-            vAlign = 'bottom';
-        }
-        _context.textBaseline = vAlign;
-    },
-
-    _calculateSplitedStrings () {
-        let paragraphedStrings = _string.split('\n');
-
-        if (_isWrapText) {
-            _splitedStrings = [];
-            let canvasWidthNoMargin = _canvasSize.width - 2 * _margin;
-            for (let i = 0; i < paragraphedStrings.length; ++i) {
-                let allWidth = textUtils.safeMeasureText(_context, paragraphedStrings[i]);
-                let textFragment = textUtils.fragmentText(paragraphedStrings[i],
-                                                        allWidth,
-                                                        canvasWidthNoMargin,
-                                                        this._measureText(_context));
-                _splitedStrings = _splitedStrings.concat(textFragment);
-            }
-        }
-        else {
-            _splitedStrings = paragraphedStrings;
+        if (_canvas.height !== _canvasSize.height) {
+            _canvas.height = _canvasSize.height;
+            recreate = true
         }
 
-    },
+        recreate && (_context.font = _fontDesc);
+        // align
+        _context.textAlign = Alignment[_hAlign];
+    }
 
     _getFontDesc () {
         let fontDesc = _fontSize.toString() + 'px ';
         fontDesc = fontDesc + _fontFamily;
-        if (_isBold) {
+        if (_enableBold) {
             fontDesc = "bold " + fontDesc;
         }
-
+        if (_enableItalic) {
+            fontDesc = "italic " + fontDesc;
+        }
         return fontDesc;
-    },
+    }
 
     _getLineHeight () {
         let nodeSpacingY = _lineHeight;
         if (nodeSpacingY === 0) {
             nodeSpacingY = _fontSize;
         } else {
-            nodeSpacingY = nodeSpacingY * _fontSize / _drawFontsize;
+            nodeSpacingY = nodeSpacingY * _fontSize / _drawFontSize;
         }
 
         return nodeSpacingY | 0;
-    },
+    }
 
     _calculateParagraphLength (paragraphedStrings, ctx) {
         let paragraphLength = [];
 
         for (let i = 0; i < paragraphedStrings.length; ++i) {
-            let width = textUtils.safeMeasureText(ctx, paragraphedStrings[i]);
+            let width = textUtils.safeMeasureText(ctx, paragraphedStrings[i], _fontDesc);
             paragraphLength.push(width);
         }
 
         return paragraphLength;
-    },
+    }
 
-    _measureText (ctx) {
+    _measureText (ctx, fontDesc) {
         return function (string) {
-            return textUtils.safeMeasureText(ctx, string);
+            return textUtils.safeMeasureText(ctx, string, fontDesc);
         };
-    },
+    }
 
-    _calculateLabelFont () {
-        _fontDesc = this._getFontDesc();
-        _context.font = _fontDesc;
-
-        if (_overflow === Overflow.SHRINK) {
-            let paragraphedStrings = _string.split('\n');
-            let paragraphLength = this._calculateParagraphLength(paragraphedStrings, _context);
+    _calculateShrinkFont (paragraphedStrings) {
+        let paragraphLength = this._calculateParagraphLength(paragraphedStrings, _context);
         
-            let i = 0;
-            let totalHeight = 0;
-            let maxLength = 0;
+        let i = 0;
+        let totalHeight = 0;
+        let maxLength = 0;
 
-            if (_isWrapText) {
-                let canvasWidthNoMargin = _canvasSize.width - 2 * _margin;
-                let canvasHeightNoMargin = _canvasSize.height - 2 * _margin;
-                if (canvasWidthNoMargin < 0 || canvasHeightNoMargin < 0) {
-                    _fontDesc = this._getFontDesc();
-                    _context.font = _fontDesc;
-                    return;
+        if (_isWrapText) {
+            let canvasWidthNoMargin = _nodeContentSize.width;
+            let canvasHeightNoMargin = _nodeContentSize.height;
+            if (canvasWidthNoMargin < 0 || canvasHeightNoMargin < 0) {
+                return;
+            }
+            totalHeight = canvasHeightNoMargin + 1;
+            let actualFontSize = _fontSize + 1;
+            let textFragment = "";
+            //let startShrinkFontSize = actualFontSize | 0;
+            let left = 0, right = actualFontSize | 0, mid = 0;
+
+            while (left < right) {
+                mid = (left + right + 1) >> 1;
+
+                if (mid <= 0) {
+                    cc.logID(4003);
+                    break;
                 }
-                totalHeight = canvasHeightNoMargin + 1;
-                maxLength = canvasWidthNoMargin + 1;
-                let actualFontSize = _fontSize + 1;
-                let textFragment = "";
-                let tryDivideByTwo = true;
-                let startShrinkFontSize = actualFontSize | 0;
 
-                while (totalHeight > canvasHeightNoMargin || maxLength > canvasWidthNoMargin) {
-                    if (tryDivideByTwo) {
-                        actualFontSize = (startShrinkFontSize / 2) | 0;
-                    } else {
-                        actualFontSize = startShrinkFontSize - 1;
-                        startShrinkFontSize = actualFontSize;
-                    }
-                    if (actualFontSize <= 0) {
-                        cc.logID(4003);
-                        break;
-                    }
-                    _fontSize = actualFontSize;
-                    _fontDesc = this._getFontDesc();
-                    _context.font = _fontDesc;
+                _fontSize = mid;
+                _fontDesc = this._getFontDesc();
+                _context.font = _fontDesc;
+                let lineHeight = this._getLineHeight();
 
-                    totalHeight = 0;
-                    for (i = 0; i < paragraphedStrings.length; ++i) {
-                        let j = 0;
-                        let allWidth = textUtils.safeMeasureText(_context, paragraphedStrings[i]);
-                        textFragment = textUtils.fragmentText(paragraphedStrings[i],
-                                                            allWidth,
-                                                            canvasWidthNoMargin,
-                                                            this._measureText(_context));
-                        while (j < textFragment.length) {
-                            let measureWidth = textUtils.safeMeasureText(_context, textFragment[j]);
-                            maxLength = measureWidth;
-                            totalHeight += this._getLineHeight();
-                            ++j;
-                        }
-                    }
+                totalHeight = 0;
+                for (i = 0; i < paragraphedStrings.length; ++i) {
+                    let allWidth = textUtils.safeMeasureText(_context, paragraphedStrings[i], _fontDesc);
+                    textFragment = textUtils.fragmentText(paragraphedStrings[i],
+                                                        allWidth,
+                                                        canvasWidthNoMargin,
+                                                        this._measureText(_context, _fontDesc));
+                    totalHeight += textFragment.length * lineHeight;
+                }
 
-                    if (tryDivideByTwo) {
-                        if (totalHeight > canvasHeightNoMargin) {
-                            startShrinkFontSize = actualFontSize | 0;
-                        } else {
-                            tryDivideByTwo = false;
-                            totalHeight = canvasHeightNoMargin + 1;
-                        }
-                    }
+                if (totalHeight > canvasHeightNoMargin) {
+                    right = mid - 1;
+                } else {
+                    left = mid;
                 }
             }
-            else {
-                totalHeight = paragraphedStrings.length * this._getLineHeight();
 
-                for (i = 0; i < paragraphedStrings.length; ++i) {
-                    if (maxLength < paragraphLength[i]) {
-                        maxLength = paragraphLength[i];
-                    }
-                }
-                let scaleX = (_canvasSize.width - 2 * _margin) / maxLength;
-                let scaleY = _canvasSize.height / totalHeight;
-
-                _fontSize = (_drawFontsize * Math.min(1, scaleX, scaleY)) | 0;
+            if (left === 0) {
+                cc.logID(4003);
+            } else {
+                _fontSize = left;
                 _fontDesc = this._getFontDesc();
                 _context.font = _fontDesc;
             }
+        } else {
+            totalHeight = paragraphedStrings.length * this._getLineHeight();
+
+            for (i = 0; i < paragraphedStrings.length; ++i) {
+                if (maxLength < paragraphLength[i]) {
+                    maxLength = paragraphLength[i];
+                }
+            }
+            let scaleX = (_canvasSize.width - _canvasPadding.width) / maxLength;
+            let scaleY = _canvasSize.height / totalHeight;
+
+            _fontSize = (_drawFontSize * Math.min(1, scaleX, scaleY)) | 0;
+            _fontDesc = this._getFontDesc();
+            _context.font = _fontDesc;
         }
     }
-};
+
+    _calculateWrapText (paragraphedStrings) {
+        if (!_isWrapText) return;
+
+        _splitedStrings = [];
+        let canvasWidthNoMargin = _nodeContentSize.width;
+        for (let i = 0; i < paragraphedStrings.length; ++i) {
+            let allWidth = textUtils.safeMeasureText(_context, paragraphedStrings[i], _fontDesc);
+            let textFragment = textUtils.fragmentText(paragraphedStrings[i],
+                                                    allWidth,
+                                                    canvasWidthNoMargin,
+                                                    this._measureText(_context, _fontDesc));
+            _splitedStrings = _splitedStrings.concat(textFragment);
+        }
+    }
+
+    _calculateLabelFont () {
+        let paragraphedStrings = _string.split('\n');
+
+        _splitedStrings = paragraphedStrings;
+        _fontDesc = this._getFontDesc();
+        _context.font = _fontDesc;
+
+        switch (_overflow) {
+            case Overflow.NONE: {
+                let canvasSizeX = 0;
+                let canvasSizeY = 0;
+                for (let i = 0; i < paragraphedStrings.length; ++i) {
+                    let paraLength = textUtils.safeMeasureText(_context, paragraphedStrings[i], _fontDesc);
+                    canvasSizeX = canvasSizeX > paraLength ? canvasSizeX : paraLength;
+                }
+                canvasSizeY = (_splitedStrings.length + textUtils.BASELINE_RATIO) * this._getLineHeight();
+                let rawWidth = parseFloat(canvasSizeX.toFixed(2));
+                let rawHeight = parseFloat(canvasSizeY.toFixed(2));
+                _canvasSize.width = rawWidth + _canvasPadding.width;
+                _canvasSize.height = rawHeight + _canvasPadding.height;
+                _nodeContentSize.width = rawWidth + _contentSizeExtend.width;
+                _nodeContentSize.height = rawHeight + _contentSizeExtend.height;
+                break;
+            }
+            case Overflow.SHRINK: {
+                this._calculateShrinkFont(paragraphedStrings);
+                this._calculateWrapText(paragraphedStrings);
+                break;
+            }
+            case Overflow.CLAMP: {
+                this._calculateWrapText(paragraphedStrings);
+                break;
+            }
+            case Overflow.RESIZE_HEIGHT: {
+                this._calculateWrapText(paragraphedStrings);
+                let rawHeight = (_splitedStrings.length + textUtils.BASELINE_RATIO) * this._getLineHeight();
+                _canvasSize.height = rawHeight + _canvasPadding.height;
+                // set node height
+                _nodeContentSize.height = rawHeight + _contentSizeExtend.height;
+                break;
+            }
+        }
+    }
+}
+

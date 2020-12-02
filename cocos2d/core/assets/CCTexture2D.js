@@ -25,21 +25,23 @@
  ****************************************************************************/
 
 const EventTarget = require('../event/event-target');
-const renderEngine = require('../renderer/render-engine');
 const renderer = require('../renderer');
 require('../platform/CCClass');
-const gfx = renderEngine.gfx;
+
+import gfx from '../../renderer/gfx';
 
 const GL_NEAREST = 9728;                // gl.NEAREST
 const GL_LINEAR = 9729;                 // gl.LINEAR
 const GL_REPEAT = 10497;                // gl.REPEAT
 const GL_CLAMP_TO_EDGE = 33071;         // gl.CLAMP_TO_EDGE
 const GL_MIRRORED_REPEAT = 33648;       // gl.MIRRORED_REPEAT
+const GL_RGBA = 6408;                   // gl.RGBA
 
 const CHAR_CODE_0 = 48;    // '0'
 const CHAR_CODE_1 = 49;    // '1'
 
 var idGenerater = new (require('../platform/id-generater'))('Tex');
+
 
 /**
  * <p>
@@ -53,6 +55,9 @@ var idGenerater = new (require('../platform/id-generater'))('Tex');
  * @uses EventTarget
  * @extends Asset
  */
+
+// define a specified number for the pixel format which gfx do not have a standard definition.
+let CUSTOM_PIXEL_FORMAT = 1024;
 
 /**
  * The texture pixel format, default value is RGBA8888, 
@@ -140,6 +145,15 @@ const PixelFormat = cc.Enum({
      */
     RGBA_PVRTC_2BPPV1: gfx.TEXTURE_FMT_RGBA_PVRTC_2BPPV1,
     /**
+     * rgb separate a 2 bpp pvrtc
+     * RGB_A_PVRTC_2BPPV1 texture is a 2x height RGB_PVRTC_2BPPV1 format texture.
+     * It separate the origin alpha channel to the bottom half atlas, the origin rgb channel to the top half atlas
+     * @property RGB_A_PVRTC_2BPPV1
+     * @readonly
+     * @type {Number}
+     */
+    RGB_A_PVRTC_2BPPV1: CUSTOM_PIXEL_FORMAT++,
+    /**
      * rgb 4 bpp pvrtc
      * @property RGB_PVRTC_4BPPV1
      * @readonly
@@ -153,6 +167,44 @@ const PixelFormat = cc.Enum({
      * @type {Number}
      */
     RGBA_PVRTC_4BPPV1: gfx.TEXTURE_FMT_RGBA_PVRTC_4BPPV1,
+    /**
+     * rgb a 4 bpp pvrtc
+     * RGB_A_PVRTC_4BPPV1 texture is a 2x height RGB_PVRTC_4BPPV1 format texture.
+     * It separate the origin alpha channel to the bottom half atlas, the origin rgb channel to the top half atlas
+     * @property RGB_A_PVRTC_4BPPV1
+     * @readonly
+     * @type {Number}
+     */
+    RGB_A_PVRTC_4BPPV1: CUSTOM_PIXEL_FORMAT++,
+    /**
+     * rgb etc1
+     * @property RGB_ETC1
+     * @readonly
+     * @type {Number}
+     */
+    RGB_ETC1: gfx.TEXTURE_FMT_RGB_ETC1,
+    /**
+     * rgba etc1
+     * @property RGBA_ETC1
+     * @readonly
+     * @type {Number}
+     */
+    RGBA_ETC1: CUSTOM_PIXEL_FORMAT++,
+
+    /**
+     * rgb etc2
+     * @property RGB_ETC2
+     * @readonly
+     * @type {Number}
+     */
+    RGB_ETC2: gfx.TEXTURE_FMT_RGB_ETC2,
+    /**
+     * rgba etc2
+     * @property RGBA_ETC2
+     * @readonly
+     * @type {Number}
+     */
+    RGBA_ETC2: gfx.TEXTURE_FMT_RGBA_ETC2,
 });
 
 /**
@@ -218,7 +270,7 @@ let _sharedOpts = {
     wrapS: undefined,
     wrapT: undefined,
     format: undefined,
-    mipmap: undefined,
+    genMipmaps: undefined,
     images: undefined,
     image: undefined,
     flipY: undefined,
@@ -230,7 +282,6 @@ function _getSharedOptions () {
     }
     _images.length = 0;
     _sharedOpts.images = _images;
-    _sharedOpts.flipY = false;
     return _sharedOpts;
 }
 
@@ -262,14 +313,69 @@ var Texture2D = cc.Class({
             },
             override: true
         },
-        _hasMipmap: false,
         _format: PixelFormat.RGBA8888,
         _premultiplyAlpha: false,
         _flipY: false,
         _minFilter: Filter.LINEAR,
         _magFilter: Filter.LINEAR,
+        _mipFilter: Filter.LINEAR,
         _wrapS: WrapMode.CLAMP_TO_EDGE,
-        _wrapT: WrapMode.CLAMP_TO_EDGE
+        _wrapT: WrapMode.CLAMP_TO_EDGE,
+
+        _isAlphaAtlas: false,
+
+        _genMipmaps: false,
+        /**
+         * !#en Sets whether generate mipmaps for the texture
+         * !#zh 是否为纹理设置生成 mipmaps。
+         * @property {Boolean} genMipmaps
+         * @default false
+         */
+        genMipmaps: {
+            get () {
+                return this._genMipmaps;
+            },
+            set (genMipmaps) {
+                if (this._genMipmaps !== genMipmaps) {
+                    var opts = _getSharedOptions();
+                    opts.genMipmaps = genMipmaps;
+                    this.update(opts);
+                }
+            }
+        },
+
+        _packable: true,
+        /**
+         * !#en 
+         * Sets whether texture can be packed into texture atlas.
+         * If need use texture uv in custom Effect, please sets packable to false.
+         * !#zh 
+         * 设置纹理是否允许参与合图。
+         * 如果需要在自定义 Effect 中使用纹理 UV，需要禁止该选项。
+         * @property {Boolean} packable
+         * @default true
+         */
+        packable: {
+            get () {
+                return this._packable;
+            },
+            set (val) {
+                this._packable = val;
+            }
+        },
+        
+        _nativeDep: {
+            get () {
+                return {
+                    __isNative__: true, 
+                    uuid: this._uuid, 
+                    ext: this._native, 
+                    __flipY__: this._flipY,
+                    __premultiplyAlpha__: this._premultiplyAlpha
+                };
+            },
+            override: true
+        }
     },
 
     statics: {
@@ -277,30 +383,57 @@ var Texture2D = cc.Class({
         WrapMode: WrapMode,
         Filter: Filter,
         _FilterIndex: FilterIndex,
-
         // predefined most common extnames
-        extnames: ['.png', '.jpg', '.jpeg', '.bmp', '.webp', '.pvr', '.etc'],
+        extnames: ['.png', '.jpg', '.jpeg', '.bmp', '.webp', '.pvr', '.pkm'],
 
-        _isCompressed (texture) {
-            return texture._format >= PixelFormat.RGB_PVRTC_2BPPV1 && texture._format <= PixelFormat.RGBA_PVRTC_4BPPV1;
+        _parseExt (extIdStr, defaultFormat) {
+            let device = cc.renderer.device;
+            let extIds = extIdStr.split('_');
+
+            let defaultExt = '';
+            let bestExt = '';
+            let bestIndex = 999;
+            let bestFormat = defaultFormat;
+            let SupportTextureFormats = cc.macro.SUPPORT_TEXTURE_FORMATS;
+            for (let i = 0; i < extIds.length; i++) {
+                let extFormat = extIds[i].split('@');
+                let tmpExt = extFormat[0];
+                tmpExt = Texture2D.extnames[tmpExt.charCodeAt(0) - CHAR_CODE_0] || tmpExt;
+
+                let index = SupportTextureFormats.indexOf(tmpExt);
+                if (index !== -1 && index < bestIndex) {
+                    
+                    let tmpFormat = extFormat[1] ? parseInt(extFormat[1]) : defaultFormat;
+
+                    // check whether or not support compressed texture
+                    if ( tmpExt === '.pvr' && !device.ext('WEBGL_compressed_texture_pvrtc')) {
+                        continue;
+                    }
+                    else if ((tmpFormat === PixelFormat.RGB_ETC1 || tmpFormat === PixelFormat.RGBA_ETC1) && !device.ext('WEBGL_compressed_texture_etc1')) {
+                        continue;
+                    }
+                    else if ((tmpFormat === PixelFormat.RGB_ETC2 || tmpFormat === PixelFormat.RGBA_ETC2) && !device.ext('WEBGL_compressed_texture_etc')) {
+                        continue;
+                    }
+                    else if (tmpExt === '.webp' && !cc.sys.capabilities.webp) {
+                        continue;
+                    }
+
+                    bestIndex = index;
+                    bestExt = tmpExt;
+                    bestFormat = tmpFormat;
+                }
+                else if (!defaultExt) {
+                    defaultExt = tmpExt;
+                }
+            }
+            return { bestExt, bestFormat, defaultExt };
         }
     },
 
     ctor () {
         // Id for generate hash in material
         this._id = idGenerater.getNewId();
-        
-        /**
-         * !#en
-         * The url of the texture, this could be empty if the texture wasn't created via a file.
-         * !#zh
-         * 贴图文件的 url，当贴图不是由文件创建时值可能为空
-         * @property url
-         * @type {String}
-         * @readonly
-         */
-        // TODO - use nativeUrl directly
-        this.url = "";
 
         /**
          * !#en
@@ -330,6 +463,8 @@ var Texture2D = cc.Class({
          */
         this.height = 0;
 
+        this._hashDirty = true;
+        this._hash = 0;
         this._texture = null;
         
         if (CC_EDITOR) {
@@ -340,11 +475,12 @@ var Texture2D = cc.Class({
     /**
      * !#en
      * Get renderer texture implementation object
-     * extended from renderEngine.TextureAsset
+     * extended from render.Texture2D
      * !#zh  返回渲染器内部贴图对象
      * @method getImpl
      */
     getImpl () {
+        if (!this._texture) this._texture = new renderer.Texture2D(renderer.device, {});
         return this._texture;
     },
 
@@ -353,7 +489,7 @@ var Texture2D = cc.Class({
     },
 
     toString () {
-        return this.url || '';
+        return this.nativeUrl || '';
     },
 
     /**
@@ -362,7 +498,7 @@ var Texture2D = cc.Class({
      * @method update
      * @param {Object} options
      * @param {DOMImageElement} options.image
-     * @param {Boolean} options.mipmap
+     * @param {Boolean} options.genMipmaps
      * @param {PixelFormat} options.format
      * @param {Filter} options.minFilter
      * @param {Filter} options.magFilter
@@ -387,6 +523,10 @@ var Texture2D = cc.Class({
                 this._magFilter = options.magFilter;
                 options.magFilter = FilterIndex[options.magFilter];
             }
+            if (options.mipFilter !== undefined) {
+                this._mipFilter = options.mipFilter;
+                options.mipFilter = FilterIndex[options.mipFilter];
+            }
             if (options.wrapS !== undefined) {
                 this._wrapS = options.wrapS;
             }
@@ -404,30 +544,41 @@ var Texture2D = cc.Class({
                 this._premultiplyAlpha = options.premultiplyAlpha;
                 updateImg = true;
             }
-            if (options.mipmap !== undefined) {
-                this._hasMipmap = options.mipmap;
+            if (options.genMipmaps !== undefined) {
+                this._genMipmaps = options.genMipmaps;
             }
 
-            if (updateImg && this._image) {
-                options.image = this._image;
+            if (cc.sys.capabilities.imageBitmap && this._image instanceof ImageBitmap) {
+                this._checkImageBitmap(this._upload.bind(this, options, updateImg));
             }
-            if (options.images && options.images.length > 0) {
-                this._image = options.images[0];
+            else {
+                this._upload(options, updateImg);
             }
-            else if (options.image !== undefined) {
-                this._image = options.image;
-                if (!options.images) {
-                    _images.length = 0;
-                    options.images = _images;
-                }
-                // webgl texture 2d uses images
-                options.images.push(options.image);
-            }
-
-            if (options.images && options.images.length > 0) {
-                this._texture.update(options);
-            }
+            
         }
+    },
+
+
+    _upload (options, updateImg) {
+        if (updateImg && this._image) {
+            options.image = this._image;
+        }
+        if (options.images && options.images.length > 0) {
+            this._image = options.images[0];
+        }
+        else if (options.image !== undefined) {
+            this._image = options.image;
+            if (!options.images) {
+                _images.length = 0;
+                options.images = _images;
+            }
+            // webgl texture 2d uses images
+            options.images.push(options.image);
+        }
+
+        this._texture && this._texture.update(options);
+
+        this._hashDirty = true;
     },
 
     /**
@@ -445,8 +596,11 @@ var Texture2D = cc.Class({
         if (!element)
             return;
         this._image = element;
-        if (CC_WECHATGAME || CC_QQPLAY || element.complete || element instanceof HTMLCanvasElement) {
+        if (element.complete || element instanceof HTMLCanvasElement) {
             this.handleLoadedTexture();
+        }
+        else if (cc.sys.capabilities.imageBitmap && element instanceof ImageBitmap) {
+            this._checkImageBitmap(this.handleLoadedTexture.bind(this));
         }
         else {
             var self = this;
@@ -461,10 +615,10 @@ var Texture2D = cc.Class({
 
     /**
      * !#en
-     * Intializes with a texture2d with data in Uint8Array.
-     * !#zh 使用一个存储在 Unit8Array 中的图像数据（raw data）初始化数据。
+     * Intializes with texture data in ArrayBufferView.
+     * !#zh 使用一个存储在 ArrayBufferView 中的图像数据（raw data）初始化数据。
      * @method initWithData
-     * @param {TypedArray} data
+     * @param {ArrayBufferView} data
      * @param {Number} pixelFormat
      * @param {Number} pixelsWidth
      * @param {Number} pixelsHeight
@@ -475,14 +629,14 @@ var Texture2D = cc.Class({
         opts.image = data;
         // webgl texture 2d uses images
         opts.images = [opts.image];
-        opts.hasMipmap = this._hasMipmap;
+        opts.genMipmaps = this._genMipmaps;
         opts.premultiplyAlpha = this._premultiplyAlpha;
         opts.flipY = this._flipY;
         opts.minFilter = FilterIndex[this._minFilter];
         opts.magFilter = FilterIndex[this._magFilter];
         opts.wrapS = this._wrapS;
         opts.wrapT = this._wrapT;
-        opts.format = pixelFormat;
+        opts.format = this._getGFXPixelFormat(pixelFormat);
         opts.width = pixelsWidth;
         opts.height = pixelsHeight;
         if (!this._texture) {
@@ -493,6 +647,10 @@ var Texture2D = cc.Class({
         }
         this.width = pixelsWidth;
         this.height = pixelsHeight;
+
+        this._updateFormat();
+        this._checkPackable();
+
         this.loaded = true;
         this.emit("load");
         return true;
@@ -500,8 +658,12 @@ var Texture2D = cc.Class({
 
     /**
      * !#en
-     * HTMLElement Object getter, available only on web.
-     * !#zh 获取当前贴图对应的 HTML Image 或 Canvas 对象，只在 Web 平台下有效。
+     * HTMLElement Object getter, available only on web.<br/>
+     * Note: texture is packed into texture atlas by default<br/>
+     * you should set texture.packable as false before getting Html element object.
+     * !#zh 获取当前贴图对应的 HTML Image 或 Canvas 对象，只在 Web 平台下有效。<br/>
+     * 注意：<br/>
+     * texture 默认参与动态合图，如果需要获取到正确的 Html 元素对象，需要先设置 texture.packable 为 false
      * @method getHtmlElementObj
      * @return {HTMLImageElement|HTMLCanvasElement}
      */
@@ -512,7 +674,7 @@ var Texture2D = cc.Class({
     /**
      * !#en
      * Destory this texture and immediately release its video memory. (Inherit from cc.Object.destroy)<br>
-     * After destroy, this object is not usable any more.
+     * After destroy, this object is not usable anymore.
      * You can use cc.isValid(obj) to check whether the object is destroyed before accessing it.
      * !#zh
      * 销毁该贴图，并立即释放它对应的显存。（继承自 cc.Object.destroy）<br/>
@@ -521,10 +683,13 @@ var Texture2D = cc.Class({
      * @return {Boolean} inherit from the CCObject
      */
     destroy () {
+        if (cc.sys.capabilities.imageBitmap && this._image instanceof ImageBitmap) {
+            this._image.close && this._image.close();
+        }
+        this._packable && cc.dynamicAtlasManager && cc.dynamicAtlasManager.deleteAtlasTexture(this);
+
         this._image = null;
         this._texture && this._texture.destroy();
-        // TODO cc.textureUtil ?
-        // cc.textureCache.removeTextureForKey(this.url);  // item.rawUrl || item.url
         this._super();
     },
 
@@ -551,15 +716,8 @@ var Texture2D = cc.Class({
         return this._premultiplyAlpha || false;
     },
 
-    /**
-     * !#en
-     * Whether or not use mipmap.
-     * !#zh 检查问题在上传 GPU 时是否生成 mipmap。
-     * @method hasMipmap
-     * @return {Boolean}
-     */
-    hasMipmap () {
-        return this._hasMipmap || false;
+    isAlphaAtlas () {
+        return this._isAlphaAtlas;
     },
 
     /**
@@ -582,8 +740,8 @@ var Texture2D = cc.Class({
         opts.images = [opts.image];
         opts.width = this.width;
         opts.height = this.height;
-        opts.hasMipmap = this._hasMipmap;
-        opts.format = this._format;
+        opts.genMipmaps = this._genMipmaps;
+        opts.format = this._getGFXPixelFormat(this._format);
         opts.premultiplyAlpha = this._premultiplyAlpha;
         opts.flipY = this._flipY;
         opts.minFilter = FilterIndex[this._minFilter];
@@ -598,16 +756,20 @@ var Texture2D = cc.Class({
             this._texture.update(opts);
         }
 
+        this._updateFormat();
+        this._checkPackable();
+
         //dispatch load event to listener.
         this.loaded = true;
         this.emit("load");
 
-        if (cc.macro.CLEANUP_IMAGE_CACHE && this._image instanceof HTMLImageElement) {
-            // wechat game platform will cache image parsed data, 
-            // so image will consume much more memory than web, releasing it
-            this._image.src = "";
-            // Release image in loader cache
-            cc.loader.removeItem(this._image.id);
+        if (cc.macro.CLEANUP_IMAGE_CACHE) {
+            if (this._image instanceof HTMLImageElement) {
+                this._clearImage();
+            }
+            else if (cc.sys.capabilities.imageBitmap && this._image instanceof ImageBitmap) {
+                this._image.close && this._image.close();
+            }
         }
     },
 
@@ -619,7 +781,7 @@ var Texture2D = cc.Class({
      * @returns {String}
      */
     description () {
-        return "<cc.Texture2D | Name = " + this.url + " | Dimensions = " + this.width + " x " + this.height + ">";
+        return "<cc.Texture2D | Name = " + this.nativeUrl + " | Dimensions = " + this.width + " x " + this.height + ">";
     },
 
     /**
@@ -639,7 +801,7 @@ var Texture2D = cc.Class({
      * If the texture size is NPOT (non power of 2), then in can only use gl.CLAMP_TO_EDGE in gl.TEXTURE_WRAP_{S,T}.
      * !#zh 设置纹理包装模式。
      * 若纹理贴图尺寸是 NPOT（non power of 2），则只能使用 Texture2D.WrapMode.CLAMP_TO_EDGE。
-     * @method setTexParameters
+     * @method setWrapMode
      * @param {Texture2D.WrapMode} wrapS
      * @param {Texture2D.WrapMode} wrapT
      */
@@ -679,6 +841,7 @@ var Texture2D = cc.Class({
         if (this._flipY !== flipY) {
             var opts = _getSharedOptions();
             opts.flipY = flipY;
+            opts.premultiplyAlpha = this._premultiplyAlpha;
             this.update(opts);
         }
     },
@@ -693,23 +856,78 @@ var Texture2D = cc.Class({
     setPremultiplyAlpha (premultiply) {
         if (this._premultiplyAlpha !== premultiply) {
             var opts = _getSharedOptions();
+            opts.flipY = this._flipY;
             opts.premultiplyAlpha = premultiply;
             this.update(opts);
         }
     },
-    
-    /**
-     * !#en
-     * Sets whether generate mipmaps for the texture
-     * !#zh 是否为纹理设置生成 mipmaps。
-     * @method setMipmap
-     * @param {Boolean} mipmap
-     */
-    setMipmap (mipmap) {
-        if (this._hasMipmap !== mipmap) {
-            var opts = _getSharedOptions();
-            opts.hasMipmap = mipmap;
-            this.update(opts);
+
+    _updateFormat () {
+        this._isAlphaAtlas = this._format === PixelFormat.RGBA_ETC1 || this._format === PixelFormat.RGB_A_PVRTC_4BPPV1 || this._format === PixelFormat.RGB_A_PVRTC_2BPPV1;
+        if (CC_JSB) {
+            this._texture.setAlphaAtlas(this._isAlphaAtlas);
+        }
+    },
+
+    _checkPackable () {
+        let dynamicAtlas = cc.dynamicAtlasManager;
+        if (!dynamicAtlas) return;
+
+        if (this._isCompressed()) {
+            this._packable = false;
+            return;
+        }
+
+        let w = this.width, h = this.height;
+        if (!this._image ||
+            w > dynamicAtlas.maxFrameSize || h > dynamicAtlas.maxFrameSize || 
+            this._getHash() !== dynamicAtlas.Atlas.DEFAULT_HASH) {
+            this._packable = false;
+            return;
+        }
+
+        if (this._image && this._image instanceof HTMLCanvasElement) {
+            this._packable = true;
+        }
+    },
+
+    _getOpts() {
+        let opts = _getSharedOptions();
+        opts.width = this.width;
+        opts.height = this.height;
+        opts.genMipmaps = this._genMipmaps;
+        opts.format = this._format;
+        opts.premultiplyAlpha = this._premultiplyAlpha;
+        opts.anisotropy = this._anisotropy;
+        opts.flipY = this._flipY;
+        opts.minFilter = FilterIndex[this._minFilter];
+        opts.magFilter = FilterIndex[this._magFilter];
+        opts.mipFilter = FilterIndex[this._mipFilter];
+        opts.wrapS = this._wrapS;
+        opts.wrapT = this._wrapT;
+        return opts;
+    },
+
+    _getGFXPixelFormat (format) {
+        if (format === PixelFormat.RGBA_ETC1) {
+            format = PixelFormat.RGB_ETC1;
+        }
+        else if (format === PixelFormat.RGB_A_PVRTC_4BPPV1) {
+            format = PixelFormat.RGB_PVRTC_4BPPV1;
+        }
+        else if (format === PixelFormat.RGB_A_PVRTC_2BPPV1) {
+            format = PixelFormat.RGB_PVRTC_2BPPV1;
+        }
+        return format;
+    },
+
+    _resetUnderlyingMipmaps(mipmapSources) {
+        const opts = this._getOpts();
+        opts.images = mipmapSources || [null];
+        if (!this._texture) {
+            this._texture = new renderer.Texture2D(renderer.device, opts);
+        } else {
+            this._texture.update(opts);
         }
     },
 
@@ -725,7 +943,7 @@ var Texture2D = cc.Class({
             let exts = [];
             for (let i = 0; i < exportedExts.length; i++) {
                 let extId = "";
-                let ext = exportedExts[i]
+                let ext = exportedExts[i];
                 if (ext) {
                     // ext@format
                     let extFormat = ext.split('@');
@@ -741,53 +959,31 @@ var Texture2D = cc.Class({
             }
             extId = exts.join('_');
         }
-        let asset = "" + extId + "," + 
-                    this._minFilter + "," + this._magFilter + "," + 
-                    this._wrapS + "," + this._wrapT + "," + 
-                    (this._premultiplyAlpha ? 1 : 0);
+        let asset = `${extId},${this._minFilter},${this._magFilter},${this._wrapS},${this._wrapT},` +
+                    `${this._premultiplyAlpha ? 1 : 0},${this._genMipmaps ? 1 : 0},${this._packable ? 1 : 0}`;
         return asset;
     },
 
-    _deserialize: function (data, handle) {
+    _deserialize: function (data) {
         let fields = data.split(',');
         // decode extname
-        var extIdStr = fields[0];
+        let extIdStr = fields[0];
         if (extIdStr) {
-            let extIds = extIdStr.split('_');
+            var result = Texture2D._parseExt(extIdStr, this._format);
 
-            let extId = 999;
-            let ext = '';
-            let format = this._format;
-            let SupportTextureFormats = cc.macro.SUPPORT_TEXTURE_FORMATS;
-            for (let i = 0; i < extIds.length; i++) {
-                let extFormat = extIds[i].split('@');
-                let tmpExt = extFormat[0];
-                tmpExt = tmpExt.charCodeAt(0) - CHAR_CODE_0;
-                tmpExt = Texture2D.extnames[tmpExt] || extFormat;
-
-                let index = SupportTextureFormats.indexOf(tmpExt);
-                if (index !== -1 && index < extId) {
-                    extId = index;
-                    ext = tmpExt;
-                    format = extFormat[1] ? parseInt(extFormat[1]) : this._format;
-                }
+            if (result.bestExt) {
+                this._setRawAsset(result.bestExt);
+                this._format = result.bestFormat;
             }
-
-            if (ext) {
-                this._setRawAsset(ext);
-                this._format = format;
+            else if (result.defaultExt) {
+                this._setRawAsset(result.defaultExt);
+                cc.warnID(3120, result.defaultExt, result.defaultExt);
             }
-
-            // preset uuid to get correct nativeUrl
-            let loadingItem = handle.customEnv;
-            let uuid = loadingItem && loadingItem.uuid;
-            if (uuid) {
-                this._uuid = uuid;
-                var url = this.nativeUrl;
-                this.url = url;
+            else {
+                throw new Error(cc.debug.getError(3121));
             }
         }
-        if (fields.length === 6) {
+        if (fields.length === 8) {
             // decode filters
             this._minFilter = parseInt(fields[1]);
             this._magFilter = parseInt(fields[2]);
@@ -796,6 +992,63 @@ var Texture2D = cc.Class({
             this._wrapT = parseInt(fields[4]);
             // decode premultiply alpha
             this._premultiplyAlpha = fields[5].charCodeAt(0) === CHAR_CODE_1;
+            this._genMipmaps = fields[6].charCodeAt(0) === CHAR_CODE_1;
+            this._packable = fields[7].charCodeAt(0) === CHAR_CODE_1;
+        }
+    },
+
+    _getHash () {
+        if (!this._hashDirty) {
+            return this._hash;
+        }
+        let genMipmaps = this._genMipmaps ? 1 : 0;
+        let premultiplyAlpha = this._premultiplyAlpha ? 1 : 0;
+        let flipY = this._flipY ? 1 : 0;
+        let minFilter = this._minFilter === Filter.LINEAR ? 1 : 2;
+        let magFilter = this._magFilter === Filter.LINEAR ? 1 : 2;
+        let wrapS = this._wrapS === WrapMode.REPEAT ? 1 : (this._wrapS === WrapMode.CLAMP_TO_EDGE ? 2 : 3);
+        let wrapT = this._wrapT === WrapMode.REPEAT ? 1 : (this._wrapT === WrapMode.CLAMP_TO_EDGE ? 2 : 3);
+        let pixelFormat = this._format;
+        let image = this._image;
+        if (CC_JSB && image) {
+            if (image._glFormat && image._glFormat !== GL_RGBA)
+                pixelFormat = 0;
+            premultiplyAlpha = image._premultiplyAlpha ? 1 : 0;
+        }
+
+        this._hash = Number(`${minFilter}${magFilter}${pixelFormat}${wrapS}${wrapT}${genMipmaps}${premultiplyAlpha}${flipY}`);
+        this._hashDirty = false;
+        return this._hash;
+    },
+
+    _isCompressed () {
+        return this._format < PixelFormat.A8 || this._format > PixelFormat.RGBA32F;
+    },
+    
+    _clearImage () {
+        this._image.src = "";
+    },
+
+    _checkImageBitmap (cb) {
+        let image = this._image;
+        let flipY = this._flipY;
+        let premultiplyAlpha = this._premultiplyAlpha;
+        if (this._flipY !== image.flipY || this._premultiplyAlpha !== image.premultiplyAlpha) {
+            createImageBitmap(image, {
+                imageOrientation: flipY !== image.flipY ? 'flipY' : 'none',
+                premultiplyAlpha: premultiplyAlpha ? 'premultiply' : 'none'}
+                ).then((result) => {
+                    image.close && image.close();
+                    result.flipY = flipY;
+                    result.premultiplyAlpha = premultiplyAlpha;
+                    this._image = result;
+                    cb();
+                }, (err) => {
+                    cc.error(err.message);
+                });
+        }
+        else {
+            cb();
         }
     }
 });

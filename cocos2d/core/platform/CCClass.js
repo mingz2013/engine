@@ -31,13 +31,12 @@ var _isPlainEmptyObj_DEV = utils.isPlainEmptyObj_DEV;
 var _cloneable_DEV = utils.cloneable_DEV;
 var Attr = require('./attribute');
 var DELIMETER = Attr.DELIMETER;
-var getTypeChecker = Attr.getTypeChecker;
 var preprocess = require('./preprocess-class');
 require('./requiring-frame');
 
 var BUILTIN_ENTRIES = ['name', 'extends', 'mixins', 'ctor', '__ctor__', 'properties', 'statics', 'editor', '__ES6__'];
 
-var INVALID_STATICS_DEV = CC_DEV && ['name', '__ctors__', '__props__', 'arguments', 'call', 'apply', 'caller',
+var INVALID_STATICS_DEV = CC_DEV && ['name', '__ctors__', '__props__', '__values__', 'arguments', 'call', 'apply', 'caller',
                        'length', 'prototype'];
 
 function pushUnique (array, item) {
@@ -105,7 +104,6 @@ function appendProp (cls, name) {
     pushUnique(cls.__props__, name);
 }
 
-var tmpArray = [];
 function defineProp (cls, className, propName, val, es6) {
     var defaultValue = val.default;
 
@@ -145,23 +143,12 @@ function defineProp (cls, className, propName, val, es6) {
     appendProp(cls, propName);
 
     // apply attributes
-    var attrs = parseAttributes(cls, val, className, propName, false);    
-    if (attrs) {
-        var onAfterProp = tmpArray;
-        for (var i = 0; i < attrs.length; i++) {
-            var attr = attrs[i];
-            Attr.attr(cls, propName, attr);
-            // register callback
-            if (attr._onAfterProp) {
-                onAfterProp.push(attr._onAfterProp);
-            }
+    parseAttributes(cls, val, className, propName, false);
+    if ((CC_EDITOR && !Editor.isBuilder) || CC_TEST) {
+        for (let i = 0; i < onAfterProps_ET.length; i++) {
+            onAfterProps_ET[i](cls, propName);
         }
-        // call callback
-        for (var c = 0; c < onAfterProp.length; c++) {
-            onAfterProp[c](cls, propName);
-        }
-        tmpArray.length = 0;
-        attrs.length = 0;
+        onAfterProps_ET.length = 0;
     }
 }
 
@@ -178,11 +165,10 @@ function defineGetSet (cls, name, propName, val, es6) {
             return;
         }
 
-        var attrs = parseAttributes(cls, val, name, propName, true);
-        for (var i = 0; i < attrs.length; i++) {
-            Attr.attr(cls, propName, attrs[i]);
+        parseAttributes(cls, val, name, propName, true);
+        if ((CC_EDITOR && !Editor.isBuilder) || CC_TEST) {
+            onAfterProps_ET.length = 0;
         }
-        attrs.length = 0;
 
         Attr.setClassAttr(cls, propName, 'serializable', false);
 
@@ -321,10 +307,7 @@ function doDefine (className, baseClass, mixins, options) {
 
             // mixin attributes
             if (CCClass._isCCClass(mixin)) {
-                mixinWithInherited(
-                    Attr.getClassAttrs(fireClass).constructor.prototype,
-                    Attr.getClassAttrs(mixin).constructor.prototype
-                );
+                mixinWithInherited(Attr.getClassAttrs(fireClass), Attr.getClassAttrs(mixin));
             }
         }
         // restore constuctor overridden by mixin
@@ -487,63 +470,100 @@ function getInitPropsJit (attrs, propList) {
 }
 
 function getInitProps (attrs, propList) {
-    var advancedProps = [];
-    var advancedValues = [];
-    var simpleProps = [];
-    var simpleValues = [];
+    var props = null;
+    var simpleEnd = 0;
+    var valueTypeEnd = 0;
 
-    for (var i = 0; i < propList.length; ++i) {
-        var prop = propList[i];
-        var attrKey = prop + DELIMETER + 'default';
-        if (attrKey in attrs) { // getter does not have default
-            var def = attrs[attrKey];
-            if ((typeof def === 'object' && def) || typeof def === 'function') {
-                advancedProps.push(prop);
-                advancedValues.push(def);
-            }
-            else {
-                // number, boolean, null, undefined, string
-                simpleProps.push(prop);
-                simpleValues.push(def);
+    (function () {
+
+        // triage properties
+
+        var simples = null;
+        var valueTypes = null;
+        var advanceds = null;
+
+        for (let i = 0; i < propList.length; ++i) {
+            var prop = propList[i];
+            var attrKey = prop + DELIMETER + 'default';
+            if (attrKey in attrs) { // getter does not have default
+                var def = attrs[attrKey];
+                if ((typeof def === 'object' && def) || typeof def === 'function') {
+                    if (def instanceof cc.ValueType) {
+                        if (!valueTypes) {
+                            valueTypes = [];
+                        }
+                        valueTypes.push(prop, def);
+                    }
+                    else {
+                        if (!advanceds) {
+                            advanceds = [];
+                        }
+                        advanceds.push(prop, def);
+                    }
+                }
+                else {
+                    // number, boolean, null, undefined, string
+                    if (!simples) {
+                        simples = [];
+                    }
+                    simples.push(prop, def);
+                }
             }
         }
-    }
+
+        // concat in compact memory
+
+        simpleEnd = simples ? simples.length : 0;
+        valueTypeEnd = simpleEnd + (valueTypes ? valueTypes.length : 0);
+        let totalLength = valueTypeEnd + (advanceds ? advanceds.length : 0);
+        props = new Array(totalLength);
+
+        for (let i = 0; i < simpleEnd; ++i) {
+            props[i] = simples[i];
+        }
+        for (let i = simpleEnd; i < valueTypeEnd; ++i) {
+            props[i] = valueTypes[i - simpleEnd];
+        }
+        for (let i = valueTypeEnd; i < totalLength; ++i) {
+            props[i] = advanceds[i - valueTypeEnd];
+        }
+    })();
 
     return function () {
-        for (let i = 0; i < simpleProps.length; ++i) {
-            this[simpleProps[i]] = simpleValues[i];
+        let i = 0;
+        for (; i < simpleEnd; i += 2) {
+            this[props[i]] = props[i + 1];
         }
-        for (let i = 0; i < advancedProps.length; i++) {
-            let prop = advancedProps[i];
-            var expression;
-            var def = advancedValues[i];
-            if (typeof def === 'object') {
-                if (def instanceof cc.ValueType) {
-                    expression = def.clone();
-                }
-                else if (Array.isArray(def)) {
-                    expression = [];
-                }
-                else {
-                    expression = {};
-                }
+        for (; i < valueTypeEnd; i += 2) {
+            this[props[i]] = props[i + 1].clone();
+        }
+        for (; i < props.length; i += 2) {
+            var def = props[i + 1];
+            if (Array.isArray(def)) {
+                this[props[i]] = [];
             }
             else {
-                // def is function
-                if (CC_EDITOR) {
-                    try {
-                        expression = def();
-                    }
-                    catch (err) {
-                        cc._throw(e);
-                        continue;
-                    }
+                var value;
+                if (typeof def === 'object') {
+                    value = {};
                 }
                 else {
-                    expression = def();
+                    // def is function
+                    if (CC_EDITOR) {
+                        try {
+                            value = def();
+                        }
+                        catch (err) {
+                            cc._throw(e);
+                            continue;
+                        }
+                    }
+                    else {
+                        value = def();
+                    }
                 }
+                this[props[i]] = value;
             }
-            this[prop] = expression;
         }
     };
 }
@@ -904,7 +924,7 @@ function declareProperties (cls, className, properties, baseClass, mixins, es6) 
      properties {
          width: {
              default: 128,
-             type: 'Integer',
+             type: cc.Integer,
              tooltip: 'The width of sprite'
          },
          height: 128,
@@ -1034,11 +1054,11 @@ CCClass._fastDefine = function (className, constructor, serializableFields) {
     js.setClassName(className, constructor);
     //constructor.__ctors__ = constructor.__ctors__ || null;
     var props = constructor.__props__ = constructor.__values__ = Object.keys(serializableFields);
-    var attrProtos = Attr.getClassAttrsProto(constructor);
+    var attrs = Attr.getClassAttrs(constructor);
     for (var i = 0; i < props.length; i++) {
         var key = props[i];
-        attrProtos[key + DELIMETER + 'visible'] = false;
-        attrProtos[key + DELIMETER + 'default'] = serializableFields[key];
+        attrs[key + DELIMETER + 'visible'] = false;
+        attrs[key + DELIMETER + 'default'] = serializableFields[key];
     }
 };
 
@@ -1074,28 +1094,29 @@ var PrimitiveTypes = {
     Boolean: 'Boolean',
     String: 'String',
 };
-var tmpAttrs = [];
-function parseAttributes (cls, attrs, className, propName, usedInGetter) {
+var onAfterProps_ET = [];
+function parseAttributes (cls, attributes, className, propName, usedInGetter) {
     var ERR_Type = CC_DEV ? 'The %s of %s must be type %s' : '';
 
-    var attrsProto = null;
-    var attrsProtoKey = '';
-    function getAttrsProto () {
-        attrsProtoKey = propName + DELIMETER;
-        return attrsProto = Attr.getClassAttrsProto(cls);
+    var attrs = null;
+    var propNamePrefix = '';
+    function initAttrs () {
+        propNamePrefix = propName + DELIMETER;
+        return attrs = Attr.getClassAttrs(cls);
     }
 
-    tmpAttrs.length = 0;
-    var result = tmpAttrs;
+    if ((CC_EDITOR && !Editor.isBuilder) || CC_TEST) {
+        onAfterProps_ET.length = 0;
+    }
 
-    var type = attrs.type;
+    var type = attributes.type;
     if (type) {
         var primitiveType = PrimitiveTypes[type];
         if (primitiveType) {
-            result.push({
-                type: type,
-                _onAfterProp: getTypeChecker(primitiveType, 'cc.' + type)
-            });
+            (attrs || initAttrs())[propNamePrefix + 'type'] = type;
+            if (((CC_EDITOR && !Editor.isBuilder) || CC_TEST) && !attributes._short) {
+                onAfterProps_ET.push(Attr.getTypeChecker_ET(primitiveType, 'cc.' + type));
+            }
         }
         else if (type === 'Object') {
             if (CC_DEV) {
@@ -1104,35 +1125,24 @@ function parseAttributes (cls, attrs, className, propName, usedInGetter) {
         }
         else {
             if (type === Attr.ScriptUuid) {
-                var attr = Attr.ObjectType(cc.ScriptAsset);
-                attr.type = 'Script';
-                result.push(attr);
+                (attrs || initAttrs())[propNamePrefix + 'type'] = 'Script';
+                attrs[propNamePrefix + 'ctor'] = cc.ScriptAsset;
             }
             else {
                 if (typeof type === 'object') {
                     if (Enum.isEnum(type)) {
-                        result.push({
-                            type: 'Enum',
-                            enumList: Enum.getList(type)
-                        });
+                        (attrs || initAttrs())[propNamePrefix + 'type'] = 'Enum';
+                        attrs[propNamePrefix + 'enumList'] = Enum.getList(type);
                     }
                     else if (CC_DEV) {
                         cc.errorID(3645, className, propName, type);
                     }
                 }
                 else if (typeof type === 'function') {
-                    if (attrs.url) {
-                        result.push({
-                            type: 'Object',
-                            ctor: type,
-                            _onAfterProp: getTypeChecker('String', 'cc.String')
-                        });
-                    }
-                    else {
-                        result.push(attrs._short ? {
-                            type: 'Object',
-                            ctor: type
-                        } : Attr.ObjectType(type));
+                    (attrs || initAttrs())[propNamePrefix + 'type'] = 'Object';
+                    attrs[propNamePrefix + 'ctor'] = type;
+                    if (((CC_EDITOR && !Editor.isBuilder) || CC_TEST) && !attributes._short) {
+                        onAfterProps_ET.push(Attr.getObjTypeChecker_ET(type));
                     }
                 }
                 else if (CC_DEV) {
@@ -1143,10 +1153,10 @@ function parseAttributes (cls, attrs, className, propName, usedInGetter) {
     }
 
     function parseSimpleAttr (attrName, expectType) {
-        if (attrName in attrs) {
-            var val = attrs[attrName];
+        if (attrName in attributes) {
+            var val = attributes[attrName];
             if (typeof val === expectType) {
-                (attrsProto || getAttrsProto())[attrsProtoKey + attrName] = val;
+                (attrs || initAttrs())[propNamePrefix + attrName] = val;
             }
             else if (CC_DEV) {
                 cc.error(ERR_Type, attrName, className, propName, expectType);
@@ -1154,70 +1164,86 @@ function parseAttributes (cls, attrs, className, propName, usedInGetter) {
         }
     }
 
-    if (attrs.editorOnly) {
+    if (attributes.editorOnly) {
         if (CC_DEV && usedInGetter) {
             cc.errorID(3613, "editorOnly", name, propName);
         }
         else {
-            (attrsProto || getAttrsProto())[attrsProtoKey + 'editorOnly'] = true;
+            (attrs || initAttrs())[propNamePrefix + 'editorOnly'] = true;
         }
     }
     //parseSimpleAttr('preventDeferredLoad', 'boolean');
     if (CC_DEV) {
         parseSimpleAttr('displayName', 'string');
         parseSimpleAttr('multiline', 'boolean');
-        if (attrs.readonly) {
-            (attrsProto || getAttrsProto())[attrsProtoKey + 'readonly'] = true;
+        if (attributes.readonly) {
+            (attrs || initAttrs())[propNamePrefix + 'readonly'] = true;
         }
         parseSimpleAttr('tooltip', 'string');
         parseSimpleAttr('slide', 'boolean');
     }
 
-    if (attrs.url) {
-        (attrsProto || getAttrsProto())[attrsProtoKey + 'saveUrlAsAsset'] = true;
-    }
-    if (attrs.serializable === false) {
+    if (attributes.serializable === false) {
         if (CC_DEV && usedInGetter) {
             cc.errorID(3613, "serializable", name, propName);
         }
         else {
-            (attrsProto || getAttrsProto())[attrsProtoKey + 'serializable'] = false;
+            (attrs || initAttrs())[propNamePrefix + 'serializable'] = false;
         }
     }
+    
+    // if (CC_BUILD || CC_TEST) {
+    //     let fsa = attributes.formerlySerializedAs;
+    //     if (fsa) {
+    //         // js.set(cls.prototype, fsa, function (val) {
+    //         //     this[propName] = val;
+    //         // });
+    //         (attrs || initAttrs())[propNamePrefix + 'formerlySerializedAs'] = fsa;
+    //         // used by deserialize-compiled
+    //         attrs[fsa + DELIMETER + 'deserializeAs'] = propName;
+    //         cls.__FSA__ = true;     // inheritable
+    //     }
+    // }
+    // else {
+    //     parseSimpleAttr('formerlySerializedAs', 'string');
+    // }
+
     parseSimpleAttr('formerlySerializedAs', 'string');
 
     if (CC_EDITOR) {
-        if ('animatable' in attrs && !attrs.animatable) {
-            (attrsProto || getAttrsProto())[attrsProtoKey + 'animatable'] = false;
+        parseSimpleAttr('notifyFor', 'string');
+
+        if ('animatable' in attributes) {
+            (attrs || initAttrs())[propNamePrefix + 'animatable'] = !!attributes.animatable;
         }
     }
 
     if (CC_DEV) {
-        var visible = attrs.visible;
+        var visible = attributes.visible;
         if (typeof visible !== 'undefined') {
             if (!visible) {
-                (attrsProto || getAttrsProto())[attrsProtoKey + 'visible'] = false;
+                (attrs || initAttrs())[propNamePrefix + 'visible'] = false;
             }
             else if (typeof visible === 'function') {
-                (attrsProto || getAttrsProto())[attrsProtoKey + 'visible'] = visible;
+                (attrs || initAttrs())[propNamePrefix + 'visible'] = visible;
             }
         }
         else {
             var startsWithUS = (propName.charCodeAt(0) === 95);
             if (startsWithUS) {
-                (attrsProto || getAttrsProto())[attrsProtoKey + 'visible'] = false;
+                (attrs || initAttrs())[propNamePrefix + 'visible'] = false;
             }
         }
     }
 
-    var range = attrs.range;
+    var range = attributes.range;
     if (range) {
         if (Array.isArray(range)) {
             if (range.length >= 2) {
-                (attrsProto || getAttrsProto())[attrsProtoKey + 'min'] = range[0];
-                attrsProto[attrsProtoKey + 'max'] = range[1];
+                (attrs || initAttrs())[propNamePrefix + 'min'] = range[0];
+                attrs[propNamePrefix + 'max'] = range[1];
                 if (range.length > 2) {
-                    attrsProto[attrsProtoKey + 'step'] = range[2];
+                    attrs[propNamePrefix + 'step'] = range[2];
                 }
             }
             else if (CC_DEV) {
@@ -1231,8 +1257,6 @@ function parseAttributes (cls, attrs, className, propName, usedInGetter) {
     parseSimpleAttr('min', 'number');
     parseSimpleAttr('max', 'number');
     parseSimpleAttr('step', 'number');
-
-    return result;
 }
 
 cc.Class = CCClass;
@@ -1246,7 +1270,7 @@ module.exports = {
     getNewValueTypeCode: CC_SUPPORT_JIT && getNewValueTypeCodeJit,
     IDENTIFIER_RE,
     escapeForJS,
-    getDefault: getDefault
+    getDefault,
 };
 
 if (CC_TEST) {

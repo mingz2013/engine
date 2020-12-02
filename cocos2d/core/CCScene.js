@@ -51,11 +51,7 @@ cc.Scene = cc.Class({
          * @property {Boolean} autoReleaseAssets
          * @default false
          */
-        autoReleaseAssets: {
-            default: undefined,
-            type: cc.Boolean
-        },
-
+        autoReleaseAssets: false,
     },
 
     ctor: function () {
@@ -92,12 +88,7 @@ cc.Scene = cc.Class({
             if (CC_TEST) {
                 cc.assert(!this._activeInHierarchy, 'Should deactivate ActionManager and EventManager by default');
             }
-            if (CC_EDITOR && this._prefabSyncedInLiveReload) {
-                this._onBatchRestored();
-            }
-            else {
-                this._onBatchCreated();
-            }
+            this._onBatchCreated(CC_EDITOR && this._prefabSyncedInLiveReload);
             this._inited = true;
         }
     },

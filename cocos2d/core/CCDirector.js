@@ -26,7 +26,6 @@
  ****************************************************************************/
 
 const EventTarget = require('./event/event-target');
-const AutoReleaseUtils = require('./load-pipeline/auto-release-utils');
 const ComponentScheduler = require('./component-scheduler');
 const NodeActivator = require('./node-activator');
 const Obj = require('./platform/CCObject');
@@ -108,7 +107,6 @@ const Scheduler = require('./CCScheduler');
 cc.Director = function () {
     EventTarget.call(this);
 
-    this.invalid = false;
     // paused?
     this._paused = false;
     // purge?
@@ -117,13 +115,17 @@ cc.Director = function () {
     this._winSizeInPoints = null;
 
     // scenes
-    this._loadingScene = '';
     this._scene = null;
+    this._loadingScene = '';
 
     // FPS
     this._totalFrames = 0;
     this._lastUpdate = 0;
     this._deltaTime = 0.0;
+    this._startTime = 0.0;
+
+    // ParticleSystem max step delta time
+    this._maxParticleDeltaTime = 0.0;
 
     // Scheduler for user registration update
     this._scheduler = null;
@@ -147,6 +149,7 @@ cc.Director.prototype = {
     init: function () {
         this._totalFrames = 0;
         this._lastUpdate = performance.now();
+        this._startTime = this._lastUpdate;
         this._paused = false;
         this._purgeDirectorInNextLoop = false;
         this._winSizeInPoints = cc.size(0, 0);
@@ -203,21 +206,29 @@ cc.Director.prototype = {
             this._physicsManager = null;
         }
 
+        // physics 3d manager
+        if (cc.Physics3DManager && (CC_PHYSICS_BUILTIN || CC_PHYSICS_CANNON)) {
+            this._physics3DManager = new cc.Physics3DManager();
+            this._scheduler.scheduleUpdate(this._physics3DManager, Scheduler.PRIORITY_SYSTEM, false);
+        } else {
+            this._physics3DManager = null;
+        }
+
         // WidgetManager
         if (cc._widgetManager) {
             cc._widgetManager.init(this);
         }
-
-        cc.loader.init(this);
     },
 
     /**
      * calculates delta time since last time it was called
      */
-    calculateDeltaTime: function () {
-        var now = performance.now();
+    calculateDeltaTime: function (now) {
+        if (!now) now = performance.now();
 
-        this._deltaTime = (now - this._lastUpdate) / 1000;
+        // avoid delta time from being negative
+        // negative deltaTime would be caused by the precision of now's value, for details please see: https://developer.mozilla.org/zh-CN/docs/Web/API/window/requestAnimationFrame
+        this._deltaTime = now > this._lastUpdate ? (now - this._lastUpdate) / 1000 : 0;
         if (CC_DEBUG && (this._deltaTime > 1))
             this._deltaTime = 1 / 60.0;
 
@@ -333,7 +344,7 @@ cc.Director.prototype = {
      * @deprecated since v2.0
      */
     purgeCachedData: function () {
-        cc.loader.releaseAll();
+        cc.assetManager.releaseAll();
     },
 
     /**
@@ -350,19 +361,20 @@ cc.Director.prototype = {
         if (eventManager)
             eventManager.setEnabled(false);
 
-        cc.renderer.clear();
-
         if (!CC_EDITOR) {
             if (cc.isValid(this._scene)) {
                 this._scene.destroy();
             }
             this._scene = null;
+
+            cc.renderer.clear();
+            cc.assetManager.builtins.clear();
         }
 
-        this.stopAnimation();
+        cc.game.pause();
 
         // Clear all caches
-        cc.loader.releaseAll();
+        cc.assetManager.releaseAll();
     },
 
     /**
@@ -394,7 +406,7 @@ cc.Director.prototype = {
             this._scheduler.scheduleUpdate(this._physicsManager, cc.Scheduler.PRIORITY_SYSTEM, false);
         }
 
-        this.startAnimation();
+        cc.game.resume();
     },
 
     /**
@@ -403,12 +415,14 @@ cc.Director.prototype = {
      * The new scene will be launched immediately.
      * !#zh 立刻切换指定场景。
      * @method runSceneImmediate
-     * @param {Scene} scene - The need run scene.
+     * @param {Scene|SceneAsset} scene - The need run scene.
      * @param {Function} [onBeforeLoadScene] - The function invoked at the scene before loading.
      * @param {Function} [onLaunched] - The function invoked at the scene after launch.
      */
     runSceneImmediate: function (scene, onBeforeLoadScene, onLaunched) {
-        cc.assertID(scene instanceof cc.Scene, 1216);
+        cc.assertID(scene instanceof cc.Scene || scene instanceof cc.SceneAsset, 1216);
+
+        if (scene instanceof cc.SceneAsset) scene = scene.scene;
 
         CC_BUILD && CC_DEBUG && console.time('InitScene');
         scene._load();  // ensure scene initialized
@@ -438,8 +452,7 @@ cc.Director.prototype = {
         if (!CC_EDITOR) {
             // auto release assets
             CC_BUILD && CC_DEBUG && console.time('AutoRelease');
-            var autoReleaseAssets = oldScene && oldScene.autoReleaseAssets && oldScene.dependAssets;
-            AutoReleaseUtils.autoRelease(autoReleaseAssets, scene.dependAssets, persistNodeList);
+            cc.assetManager._releaseManager._autoRelease(oldScene, scene, persistNodeList);
             CC_BUILD && CC_DEBUG && console.timeEnd('AutoRelease');
         }
 
@@ -468,7 +481,7 @@ cc.Director.prototype = {
         CC_BUILD && CC_DEBUG && console.timeEnd('Activate');
 
         //start scene
-        this.startAnimation();
+        cc.game.resume();
 
         if (onLaunched) {
             onLaunched(null, scene);
@@ -482,55 +495,22 @@ cc.Director.prototype = {
      * The new scene will be launched at the end of the current frame.
      * !#zh 运行指定场景。
      * @method runScene
-     * @param {Scene} scene - The need run scene.
+     * @param {Scene|SceneAsset} scene - The need run scene.
      * @param {Function} [onBeforeLoadScene] - The function invoked at the scene before loading.
      * @param {Function} [onLaunched] - The function invoked at the scene after launch.
-     * @private
      */
     runScene: function (scene, onBeforeLoadScene, onLaunched) {
         cc.assertID(scene, 1205);
-        cc.assertID(scene instanceof cc.Scene, 1216);
+        cc.assertID(scene instanceof cc.Scene || scene instanceof cc.SceneAsset, 1216);
 
+        if (scene instanceof cc.SceneAsset) scene = scene.scene;
         // ensure scene initialized
         scene._load();
 
         // Delay run / replace scene to the end of the frame
-        this.once(cc.Director.EVENT_AFTER_UPDATE, function () {
+        this.once(cc.Director.EVENT_AFTER_DRAW, function () {
             this.runSceneImmediate(scene, onBeforeLoadScene, onLaunched);
         }, this);
-    },
-
-    //  @Scene loading section
-
-    _getSceneUuid: function (key) {
-        var scenes = game._sceneInfos;
-        if (typeof key === 'string') {
-            if (!key.endsWith('.fire')) {
-                key += '.fire';
-            }
-            if (key[0] !== '/' && !key.startsWith('db://')) {
-                key = '/' + key;    // 使用全名匹配
-            }
-            // search scene
-            for (var i = 0; i < scenes.length; i++) {
-                var info = scenes[i];
-                if (info.url.endsWith(key)) {
-                    return info;
-                }
-            }
-        }
-        else if (typeof key === 'number') {
-            if (0 <= key && key < scenes.length) {
-                return scenes[key];
-            }
-            else {
-                cc.errorID(1206, key);
-            }
-        }
-        else {
-            cc.errorID(1207, key);
-        }
-        return null;
     },
 
     /**
@@ -544,15 +524,29 @@ cc.Director.prototype = {
      */
     loadScene: function (sceneName, onLaunched, _onUnloaded) {
         if (this._loadingScene) {
-            cc.errorID(1208, sceneName, this._loadingScene);
+            cc.warnID(1208, sceneName, this._loadingScene);
             return false;
         }
-        var info = this._getSceneUuid(sceneName);
-        if (info) {
-            var uuid = info.uuid;
+        var bundle = cc.assetManager.bundles.find(function (bundle) {
+            return bundle.getSceneInfo(sceneName);
+        });
+        if (bundle) {
             this.emit(cc.Director.EVENT_BEFORE_SCENE_LOADING, sceneName);
             this._loadingScene = sceneName;
-            this._loadSceneByUuid(uuid, onLaunched, _onUnloaded);
+            var self = this;
+            console.time('LoadScene ' + sceneName);
+            bundle.loadScene(sceneName, function (err, scene) {
+                console.timeEnd('LoadScene ' + sceneName);
+                self._loadingScene = '';
+                if (err) {
+                    err = 'Failed to load scene: ' + err;
+                    cc.error(err);
+                    onLaunched && onLaunched(err);
+                }
+                else {
+                    self.runSceneImmediate(scene, _onUnloaded, onLaunched);
+                }
+            });
             return true;
         }
         else {
@@ -561,7 +555,7 @@ cc.Director.prototype = {
         }
     },
 
-    /**
+     /**
      * !#en
      * Preloads the scene to reduces loading time. You can call this method at any time you want.
      * After calling this method, you still need to launch the scene by `cc.director.loadScene`.
@@ -580,95 +574,19 @@ cc.Director.prototype = {
      * @param {Function} [onLoaded] - callback, will be called after scene loaded.
      * @param {Error} onLoaded.error - null or the error object.
      */
-    preloadScene: function (sceneName, onProgress, onLoaded) {
-        if (onLoaded === undefined) {
-            onLoaded = onProgress;
-            onProgress = null;
-        }
-
-        var info = this._getSceneUuid(sceneName);
-        if (info) {
-            this.emit(cc.Director.EVENT_BEFORE_SCENE_LOADING, sceneName);
-            cc.loader.load({ uuid: info.uuid, type: 'uuid' }, 
-                onProgress,    
-                function (error, asset) {
-                    if (error) {
-                        cc.errorID(1210, sceneName, error.message);
-                    }
-                    if (onLoaded) {
-                        onLoaded(error, asset);
-                    }
-                });       
+    preloadScene (sceneName, onProgress, onLoaded) {
+        var bundle = cc.assetManager.bundles.find(function (bundle) {
+            return bundle.getSceneInfo(sceneName);
+        });
+        if (bundle) {
+            bundle.preloadScene(sceneName, null, onProgress, onLoaded);
         }
         else {
-            var error = 'Can not preload the scene "' + sceneName + '" because it is not in the build settings.';
-            onLoaded(new Error(error));
-            cc.error('preloadScene: ' + error);
+            cc.errorID(1209, sceneName);
+            return null;
         }
     },
 
-    /**
-     * Loads the scene by its uuid.
-     * @method _loadSceneByUuid
-     * @param {String} uuid - the uuid of the scene asset to load
-     * @param {Function} [onLaunched]
-     * @param {Function} [onUnloaded]
-     * @param {Boolean} [dontRunScene] - Just download and initialize the scene but will not launch it,
-     *                                   only take effect in the Editor.
-     * @private
-     */
-    _loadSceneByUuid: function (uuid, onLaunched, onUnloaded, dontRunScene) {
-        if (CC_EDITOR) {
-            if (typeof onLaunched === 'boolean') {
-                dontRunScene = onLaunched;
-                onLaunched = null;
-            }
-            if (typeof onUnloaded === 'boolean') {
-                dontRunScene = onUnloaded;
-                onUnloaded = null;
-            }
-        }
-        //cc.AssetLibrary.unloadAsset(uuid);     // force reload
-        console.time('LoadScene ' + uuid);
-        cc.AssetLibrary.loadAsset(uuid, function (error, sceneAsset) {
-            console.timeEnd('LoadScene ' + uuid);
-            var self = cc.director;
-            self._loadingScene = '';
-            if (error) {
-                error = 'Failed to load scene: ' + error;
-                cc.error(error);
-            }
-            else {
-                if (sceneAsset instanceof cc.SceneAsset) {
-                    var scene = sceneAsset.scene;
-                    scene._id = sceneAsset._uuid;
-                    scene._name = sceneAsset._name;
-                    if (CC_EDITOR) {
-                        if (!dontRunScene) {
-                            self.runSceneImmediate(scene, onUnloaded, onLaunched);
-                        }
-                        else {
-                            scene._load();
-                            if (onLaunched) {
-                                onLaunched(null, scene);
-                            }
-                        }
-                    }
-                    else {
-                        self.runSceneImmediate(scene, onUnloaded, onLaunched);
-                    }
-                    return;
-                }
-                else {
-                    error = 'The asset ' + uuid + ' is not a scene';
-                    cc.error(error);
-                }
-            }
-            if (onLaunched) {
-                onLaunched(error);
-            }
-        });
-    },
 
     /**
      * !#en Resume game logic execution after pause, if the current scene is not paused, nothing will happen.
@@ -781,6 +699,16 @@ cc.Director.prototype = {
     },
 
     /**
+     * !#en Returns the total passed time since game start, unit: ms
+     * !#zh 获取从游戏开始到现在总共经过的时间，单位为 ms
+     * @method getTotalTime
+     * @return {Number}
+     */
+    getTotalTime: function () {
+        return performance.now() - this._startTime;
+    },
+
+    /**
      * !#en Returns how many frames were called since the director started.
      * !#zh 获取 director 启动以来游戏运行的总帧数。
      * @method getTotalFrames
@@ -877,20 +805,36 @@ cc.Director.prototype = {
         return this._physicsManager;
     },
 
+    /**
+     * !#en Returns the cc.Physics3DManager associated with this director.
+     * !#zh 返回与 director 相关联的 cc.Physics3DManager （物理管理器）。
+     * @method getPhysics3DManager
+     * @return {Physics3DManager}
+     */
+    getPhysics3DManager: function () {
+        return this._physics3DManager;
+    },
+
     // Loop management
     /*
      * Starts Animation
+     * @deprecated since v2.1.2
      */
     startAnimation: function () {
-        this.invalid = false;
-        this._lastUpdate = performance.now();
+        cc.game.resume();
     },
 
     /*
      * Stops animation
+     * @deprecated since v2.1.2
      */
     stopAnimation: function () {
-        this.invalid = true;
+        cc.game.pause();
+    },
+
+    _resetDeltaTime () {
+        this._lastUpdate = performance.now();
+        this._deltaTime = 0;
     },
 
     /*
@@ -917,42 +861,48 @@ cc.Director.prototype = {
 
         // Render
         this.emit(cc.Director.EVENT_BEFORE_DRAW);
-        renderer.render(this._scene);
+        renderer.render(this._scene, deltaTime);
         
         // After draw
         this.emit(cc.Director.EVENT_AFTER_DRAW);
 
         this._totalFrames++;
 
-    } : function () {
+    } : function (now) {
         if (this._purgeDirectorInNextLoop) {
             this._purgeDirectorInNextLoop = false;
             this.purgeDirector();
         }
-        else if (!this.invalid) {
+        else {
             // calculate "global" dt
-            this.calculateDeltaTime();
+            this.calculateDeltaTime(now);
 
             // Update
             if (!this._paused) {
+                // before update
                 this.emit(cc.Director.EVENT_BEFORE_UPDATE);
+
                 // Call start for new added components
                 this._compScheduler.startPhase();
+
                 // Update for components
                 this._compScheduler.updatePhase(this._deltaTime);
                 // Engine update with scheduler
                 this._scheduler.update(this._deltaTime);
+
                 // Late update for components
                 this._compScheduler.lateUpdatePhase(this._deltaTime);
+
                 // User can use this event to do things after update
                 this.emit(cc.Director.EVENT_AFTER_UPDATE);
+                
                 // Destroy entities that have been removed recently
                 Obj._deferredDestroy();
             }
 
             // Render
             this.emit(cc.Director.EVENT_BEFORE_DRAW);
-            renderer.render(this._scene);
+            renderer.render(this._scene, this._deltaTime);
 
             // After draw
             this.emit(cc.Director.EVENT_AFTER_DRAW);
@@ -963,11 +913,11 @@ cc.Director.prototype = {
     },
 
     __fastOn: function (type, callback, target) {
-        this.add(type, callback, target);
+        this.on(type, callback, target);
     },
 
     __fastOff: function (type, callback, target) {
-        this.remove(type, callback, target);
+        this.off(type, callback, target);
     },
 };
 
@@ -1146,6 +1096,22 @@ cc.Director.PROJECTION_CUSTOM = 3;
  * @deprecated since v2.0
  */
 cc.Director.PROJECTION_DEFAULT = cc.Director.PROJECTION_2D;
+
+/**
+ * The event which will be triggered before the physics process.<br/>
+ * 物理过程之前所触发的事件。
+ * @event Director.EVENT_BEFORE_PHYSICS
+ * @readonly
+ */
+cc.Director.EVENT_BEFORE_PHYSICS = 'director_before_physics';
+
+/**
+ * The event which will be triggered after the physics process.<br/>
+ * 物理过程之后所触发的事件。
+ * @event Director.EVENT_AFTER_PHYSICS
+ * @readonly
+ */
+cc.Director.EVENT_AFTER_PHYSICS = 'director_after_physics';
 
 /**
  * @module cc

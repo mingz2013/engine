@@ -23,183 +23,335 @@
  THE SOFTWARE.
  ****************************************************************************/
 
-const utils = require('../utils');
-const dynamicAtlasManager = require('../../../../utils/dynamic-atlas/manager');
+import Assembler2D from '../../../../assembler-2d';
 
-module.exports = {
-    useModel: false,
-    
-    vertexOffset: 5,
-    uvOffset: 2,
-    colorOffset: 4,
+export default class TiledAssembler extends Assembler2D {
+    initData (sprite) {
+        this.verticesCount = 0;
+        this.contentWidth = 0;
+        this.contentHeight = 0;
+        this.rectWidth = 0;
+        this.rectHeight = 0;
+        this.hRepeat = 0;
+        this.vRepeat = 0;
+        this.row = 0;
+        this.col = 0;
 
-    createData (sprite) {
-        return sprite.requestRenderData();
-    },
+        this._renderData.createFlexData(0, 4, 6, this.getVfmt());
+        this._updateIndices();
+    }
+
+    initLocal () {
+        this._local = { x: [], y: []};
+    }
+
+    _updateIndices () {
+        let iData = this._renderData.iDatas[0];
+        for (let i = 0, vid = 0, l = iData.length; i < l; i += 6, vid += 4) {
+            iData[i] = vid;
+            iData[i + 1] = vid + 1;
+            iData[i + 2] = vid + 2;
+            iData[i + 3] = vid + 1;
+            iData[i + 4] = vid + 3;
+            iData[i + 5] = vid + 2;
+        }
+    }
 
     updateRenderData (sprite) {
-        utils.packToDynamicAtlas(sprite);
+        let frame = sprite._spriteFrame;
+        this.packToDynamicAtlas(sprite, frame);
 
-        let renderData = sprite._renderData;
-        let frame = sprite.spriteFrame;
-        if (!frame || !renderData || 
-            !(renderData.uvDirty || renderData.vertDirty)) 
-            return;
+        let node = sprite.node;
 
-        let node = sprite.node,
-            contentWidth = Math.abs(node.width),
-            contentHeight = Math.abs(node.height),
-            appx = node.anchorX * contentWidth,
-            appy = node.anchorY * contentHeight;
+        let contentWidth = this.contentWidth = Math.abs(node.width);
+        let contentHeight = this.contentHeight = Math.abs(node.height);
+        let rect = frame._rect;
+        let leftWidth = frame.insetLeft, rightWidth = frame.insetRight, centerWidth = rect.width - leftWidth - rightWidth,
+            topHeight = frame.insetTop, bottomHeight = frame.insetBottom, centerHeight = rect.height - topHeight - bottomHeight;
+        this.sizableWidth = contentWidth - leftWidth - rightWidth;
+        this.sizableHeight = contentHeight - topHeight - bottomHeight;
+        this.sizableWidth = this.sizableWidth > 0 ? this.sizableWidth : 0;
+        this.sizableHeight = this.sizableHeight > 0 ? this.sizableHeight : 0;
+        let hRepeat = this.hRepeat = centerWidth === 0 ? this.sizableWidth : this.sizableWidth / centerWidth;
+        let vRepeat = this.vRepeat = centerHeight === 0 ? this.sizableHeight : this.sizableHeight / centerHeight;
+        let row = this.row = Math.ceil(vRepeat + 2);
+        let col = this.col = Math.ceil(hRepeat + 2);
 
-        let rect = frame._rect,
-            rectWidth = rect.width,
-            rectHeight = rect.height,
-            hRepeat = contentWidth / rectWidth,
-            vRepeat = contentHeight / rectHeight,
-            row = Math.ceil(vRepeat), 
-            col = Math.ceil(hRepeat);
-
-        let data = renderData._data;
-        renderData.dataLength = Math.max(8, row+1, col+1);
-
-        for (let i = 0; i <= col; ++i) {
-            data[i].x = Math.min(rectWidth * i, contentWidth) - appx;
-        }
-        for (let i = 0; i <= row; ++i) {
-            data[i].y = Math.min(rectHeight * i, contentHeight) - appy;
-        }
-        
         // update data property
-        renderData.vertexCount = row * col * 4;
-        renderData.indiceCount = row * col * 6;
-        renderData.uvDirty = false;
-        renderData.vertDirty = false;
-    },
+        let count = row * col;
+        this.verticesCount = count * 4;
+        this.indicesCount = count * 6;
 
-    fillVertices (vbuf, vertexOffset, matrix, row, col, data) {
-        let a = matrix.m00, b = matrix.m01, c = matrix.m04, d = matrix.m05,
-            tx = matrix.m12, ty = matrix.m13;
+        let renderData = this._renderData;
+        let flexBuffer = renderData._flexBuffer;
+        if (flexBuffer.reserve(this.verticesCount, this.indicesCount)) {
+            this._updateIndices();
+            this.updateColor(sprite);
+        }
+        flexBuffer.used(this.verticesCount, this.indicesCount);
 
-        let x, x1, y, y1;
-        for (let yindex = 0, ylength = row; yindex < ylength; ++yindex) {
-            y = data[yindex].y;
-            y1 = data[yindex+1].y;
-            for (let xindex = 0, xlength = col; xindex < xlength; ++xindex) {
-                x = data[xindex].x;
-                x1 = data[xindex+1].x;
+        if (sprite._vertsDirty) {
+            this.updateUVs(sprite);
+            this.updateVerts(sprite);
+            sprite._vertsDirty = false;
+        }
+    }
 
-                // Vertex
-                // lb
-                vbuf[vertexOffset] = x * a + y * c + tx;
-                vbuf[vertexOffset+1] = x * b + y * d + ty;
-                // rb
-                vbuf[vertexOffset+5] = x1 * a + y * c + tx;
-                vbuf[vertexOffset+6] = x1 * b + y * d + ty;
-                // lt
-                vbuf[vertexOffset+10] = x * a + y1 * c + tx;
-                vbuf[vertexOffset+11] = x * b + y1 * d + ty;
-                // rt
-                vbuf[vertexOffset+15] = x1 * a + y1 * c + tx;
-                vbuf[vertexOffset+16] = x1 * b + y1 * d + ty;
+    updateVerts (sprite) {
+        let frame = sprite._spriteFrame;
+        let rect = frame._rect;
+        let node = sprite.node,
+            appx = node.anchorX * node.width, appy = node.anchorY * node.height;
 
-                vertexOffset += 20;
+        let { row, col, contentWidth, contentHeight } = this;
+        let { x, y } = this._local;
+        x.length = y.length = 0;
+        let leftWidth = frame.insetLeft, rightWidth = frame.insetRight, centerWidth = rect.width - leftWidth - rightWidth,
+            topHeight = frame.insetTop, bottomHeight = frame.insetBottom, centerHeight = rect.height - topHeight - bottomHeight;
+        let xScale = (node.width / (leftWidth + rightWidth)) > 1 ? 1 : (node.width / (leftWidth + rightWidth));
+        let yScale = (node.height / (topHeight + bottomHeight)) > 1 ? 1 : (node.height / (topHeight + bottomHeight));
+        let offsetWidth = 0, offsetHeight = 0;
+        if (centerWidth > 0) {
+            /*
+             * Because the float numerical calculation in javascript is not accurate enough, 
+             * there is an expected result of 1.0, but the actual result is 1.000001.
+             */
+            offsetWidth = Math.floor(this.sizableWidth * 1000) / 1000 % centerWidth === 0 ? centerWidth : this.sizableWidth % centerWidth;
+        }
+        else {
+            offsetWidth = this.sizableWidth;
+        }
+        if (centerHeight > 0) {
+            offsetHeight = Math.floor(this.sizableHeight * 1000) / 1000 % centerHeight === 0 ? centerHeight : this.sizableHeight % centerHeight;
+        }
+        else {
+            offsetHeight = this.sizableHeight;
+        }
+
+        for (let i = 0; i <= col; i++) {
+            if (i === 0) {
+                x[i] = - appx;
+            }
+            else if (i > 0 && i < col) {
+                if (i === 1) {
+                    x[i] = leftWidth * xScale + Math.min(centerWidth, this.sizableWidth) - appx;
+                }
+                else {
+                    if (centerWidth > 0) {
+                        if (i === (col - 1)) {
+                            x[i] = leftWidth + offsetWidth + centerWidth * (i - 2) - appx;
+                        }
+                        else {
+                            x[i] = leftWidth + Math.min(centerWidth, this.sizableWidth) + centerWidth * (i - 2) - appx;
+                        }
+                    }
+                    else {
+                        x[i] = leftWidth + this.sizableWidth - appx;
+                    }
+                }
+            }
+            else if (i === col) {
+                x[i] = Math.min(leftWidth + this.sizableWidth + rightWidth, contentWidth) - appx;
             }
         }
-    },
+        for (let i = 0; i <= row; i++) {
+            if (i === 0) {
+                y[i] = - appy;
+            }
+            else if (i > 0 && i < row) {
+                if (i === 1) {
+                    y[i] = bottomHeight * yScale + Math.min(centerHeight, this.sizableHeight) - appy;
+                }
+                else {
+                    if (centerHeight > 0) {
+                        if (i === (row - 1)) {
+                            y[i] = bottomHeight + offsetHeight + (i - 2) * centerHeight - appy;
+                        }
+                        else {
+                            y[i] = bottomHeight + Math.min(centerHeight, this.sizableHeight) + (i - 2) * centerHeight - appy;
+                        }
+                    }
+                    else {
+                        y[i] = bottomHeight + this.sizableHeight - appy;
+                    }
+                }
+            }
+            else if (i === row) {
+                y[i] = Math.min(bottomHeight + this.sizableHeight + topHeight, contentHeight) - appy;
+            }
+        }
 
-    fillBuffers (sprite, renderer) {
-        let node = sprite.node,
-            is3DNode = node.is3DNode,
-            color = node._color._val,
-            renderData = sprite._renderData,
-            data = renderData._data;
+        this.updateWorldVerts(sprite);
+    }
+    
+    updateWorldVerts (sprite) {
+        let renderData = this._renderData;
+        let local = this._local;
+        let localX = local.x, localY = local.y;
+        let world = renderData.vDatas[0];
+        let { row, col } = this;
+        let matrix = sprite.node._worldMatrix;
+        let matrixm = matrix.m;
+        let a = matrixm[0], b = matrixm[1], c = matrixm[4], d = matrixm[5],
+            tx = matrixm[12], ty = matrixm[13];
 
-        // buffer
-        let buffer = is3DNode ? renderer._meshBuffer3D : renderer._meshBuffer,
-            vertexOffset = buffer.byteOffset >> 2,
-            indiceOffset = buffer.indiceOffset,
-            vertexId = buffer.vertexOffset;
-            
-        buffer.request(renderData.vertexCount, renderData.indiceCount);
-
-        // buffer data may be realloc, need get reference after request.
-        let vbuf = buffer._vData,
-            uintbuf = buffer._uintVData,
-            ibuf = buffer._iData;
-
-        let rotated = sprite.spriteFrame._rotated;
-        let uv = sprite.spriteFrame.uv;
-        let rect = sprite.spriteFrame._rect;
-        let contentWidth = Math.abs(node.width);
-        let contentHeight = Math.abs(node.height);
-        let hRepeat = contentWidth / rect.width;
-        let vRepeat = contentHeight / rect.height;
-        let row = Math.ceil(vRepeat), 
-            col = Math.ceil(hRepeat);
-        
-        let matrix = node._worldMatrix;
-        
-        this.fillVertices(vbuf, vertexOffset, matrix, row, col, data);
-
-        let offset = this.vertexOffset, uvOffset = this.uvOffset, colorOffset = this.colorOffset;
-        let offset1 = offset, offset2 = offset*2, offset3 = offset*3, offset4 = offset*4;
-        let coefu, coefv;
+        let x, x1, y, y1;
+        let floatsPerVert = this.floatsPerVert;
+        let vertexOffset = 0;
         for (let yindex = 0, ylength = row; yindex < ylength; ++yindex) {
-            coefv = Math.min(1, vRepeat - yindex);
+            y = localY[yindex];
+            y1 = localY[yindex + 1];
             for (let xindex = 0, xlength = col; xindex < xlength; ++xindex) {
-                coefu = Math.min(1, hRepeat - xindex);
+                x = localX[xindex];
+                x1 = localX[xindex + 1];
 
-                let vertexOffsetU = vertexOffset + uvOffset;
-                let vertexOffsetV = vertexOffsetU + 1;
+                // lb
+                world[vertexOffset] = x * a + y * c + tx;
+                world[vertexOffset + 1] = x * b + y * d + ty;
+                vertexOffset += floatsPerVert;
+                // rb
+                world[vertexOffset] = x1 * a + y * c + tx;
+                world[vertexOffset + 1] = x1 * b + y * d + ty;
+                vertexOffset += floatsPerVert;
+                // lt
+                world[vertexOffset] = x * a + y1 * c + tx;
+                world[vertexOffset + 1] = x * b + y1 * d + ty;
+                vertexOffset += floatsPerVert;
+                // rt
+                world[vertexOffset] = x1 * a + y1 * c + tx;
+                world[vertexOffset + 1] = x1 * b + y1 * d + ty;
+                vertexOffset += floatsPerVert;
+            }
+        }
+    }
+
+    updateUVs (sprite) {
+        let verts = this._renderData.vDatas[0];
+        if (!verts) return;
+        
+        let frame = sprite._spriteFrame;
+        let rect = frame._rect;
+        let leftWidth = frame.insetLeft, rightWidth = frame.insetRight, centerWidth = rect.width - leftWidth - rightWidth,
+            topHeight = frame.insetTop, bottomHeight = frame.insetBottom, centerHeight = rect.height - topHeight - bottomHeight;
+
+        let { row, col, hRepeat, vRepeat } = this;
+        let coefu = 0, coefv = 0;
+        let uv = sprite.spriteFrame.uv;
+        let uvSliced = sprite.spriteFrame.uvSliced;
+        let rotated = sprite.spriteFrame._rotated;
+        let floatsPerVert = this.floatsPerVert, uvOffset = this.uvOffset;
+        for (let yindex = 0, ylength = row; yindex < ylength; ++yindex) {
+            if (this.sizableHeight > centerHeight) {
+                if (this.sizableHeight >= yindex * centerHeight) {
+                    coefv = 1;
+                }
+                else {
+                    coefv = vRepeat % 1;
+                }
+            }
+            else {
+                coefv = vRepeat;
+            }
+            for (let xindex = 0, xlength = col; xindex < xlength; ++xindex) {
+                if (this.sizableWidth > centerWidth) {
+                    if (this.sizableWidth >= xindex * centerWidth) {
+                        coefu = 1;
+                    }
+                    else {
+                        coefu = hRepeat % 1;
+                    }
+                }
+                else {
+                    coefu = hRepeat;
+                }
+
                 // UV
                 if (rotated) {
                     // lb
-                    vbuf[vertexOffsetU] = uv[0];
-                    vbuf[vertexOffsetV] = uv[1];
+                    verts[uvOffset] = uv[0];
+                    verts[uvOffset + 1] = uv[1];
+                    uvOffset += floatsPerVert;
                     // rb
-                    vbuf[vertexOffsetU+offset1] = uv[0];
-                    vbuf[vertexOffsetV+offset1] = uv[1] + (uv[7] - uv[1]) * coefu;
+                    verts[uvOffset] = uv[0];
+                    verts[uvOffset + 1] = uv[1] + (uv[7] - uv[1]) * coefu;
+                    uvOffset += floatsPerVert;
                     // lt
-                    vbuf[vertexOffsetU+offset2] = uv[0] + (uv[6] - uv[0]) * coefv;
-                    vbuf[vertexOffsetV+offset2] = uv[1];
+                    verts[uvOffset] = uv[0] + (uv[6] - uv[0]) * coefv;
+                    verts[uvOffset + 1] = uv[1];
+                    uvOffset += floatsPerVert;
                     // rt
-                    vbuf[vertexOffsetU+offset3] = vbuf[vertexOffsetU+offset2];
-                    vbuf[vertexOffsetV+offset3] = vbuf[vertexOffsetV+offset1];
+                    verts[uvOffset] = verts[uvOffset - floatsPerVert];
+                    verts[uvOffset + 1] = verts[uvOffset + 1 - floatsPerVert * 2];
+                    uvOffset += floatsPerVert;
                 }
                 else {
                     // lb
-                    vbuf[vertexOffsetU] = uv[0];
-                    vbuf[vertexOffsetV] = uv[1];
+                    if (xindex === 0) {
+                        verts[uvOffset] = uv[0];
+                    }
+                    else if (xindex > 0 && xindex < (col - 1)) {
+                        verts[uvOffset] = uvSliced[1].u;
+                    }
+                    else if(xindex === (col - 1)) {
+                        verts[uvOffset] = uvSliced[2].u;
+                    }
+                    if (yindex === 0) {
+                        verts[uvOffset + 1] = uvSliced[0].v;
+                    }
+                    else if (yindex > 0 && yindex < (row - 1)) {
+                        verts[uvOffset + 1] = uvSliced[4].v;
+                    }
+                    else if (yindex === (row - 1)) {
+                        verts[uvOffset + 1] = uvSliced[8].v;
+                    }
+                    uvOffset += floatsPerVert;
                     // rb
-                    vbuf[vertexOffsetU+offset1] = uv[0] + (uv[6] - uv[0]) * coefu;
-                    vbuf[vertexOffsetV+offset1] = uv[1];
+                    if (xindex === 0) {
+                        verts[uvOffset] = uvSliced[1].u + (uvSliced[2].u - uvSliced[1].u) * coefu;
+                    }
+                    else if (xindex > 0 && xindex < (col - 1)) {
+                        verts[uvOffset] = uvSliced[1].u + (uvSliced[2].u - uvSliced[1].u) * coefu;
+                    }
+                    else if (xindex === (col - 1)){
+                        verts[uvOffset] = uvSliced[3].u;
+                    }
+                    if (yindex === 0) {
+                        verts[uvOffset + 1] = uvSliced[0].v;
+                    }
+                    else if (yindex > 0 && yindex < (row - 1)) {
+                        verts[uvOffset + 1] = uvSliced[4].v;
+                    }
+                    else if (yindex === (row - 1)) {
+                        verts[uvOffset + 1] = uvSliced[8].v;
+                    }
+                    uvOffset += floatsPerVert;
                     // lt
-                    vbuf[vertexOffsetU+offset2] = uv[0];
-                    vbuf[vertexOffsetV+offset2] = uv[1] + (uv[7] - uv[1]) * coefv;
+                    if (xindex === 0) {
+                        verts[uvOffset] = uv[0];
+                    }
+                    else if (xindex > 0 && xindex < (col - 1)) {
+                        verts[uvOffset] = uvSliced[1].u;
+                    }
+                    else if (xindex === (col - 1)) {
+                        verts[uvOffset] = uvSliced[2].u;
+                    }
+                    if (yindex === 0) {
+                        verts[uvOffset + 1] = uvSliced[4].v + (uvSliced[8].v - uvSliced[4].v) * coefv;
+                    }
+                    else if (yindex > 0 && yindex < (row - 1)) {
+                        verts[uvOffset + 1] = uvSliced[4].v + (uvSliced[8].v - uvSliced[4].v) * coefv;
+                    }
+                    else if (yindex === (row - 1)) {
+                        verts[uvOffset + 1] = uvSliced[12].v;
+                    }
+                    uvOffset += floatsPerVert;
                     // rt
-                    vbuf[vertexOffsetU+offset3] = vbuf[vertexOffsetU+offset1];
-                    vbuf[vertexOffsetV+offset3] = vbuf[vertexOffsetV+offset2];
+                    verts[uvOffset] = verts[uvOffset - floatsPerVert * 2];
+                    verts[uvOffset + 1] = verts[uvOffset + 1 - floatsPerVert];
+                    uvOffset += floatsPerVert;
                 }
-                // color
-                uintbuf[vertexOffset+colorOffset] = color;
-                uintbuf[vertexOffset+colorOffset+offset1] = color;
-                uintbuf[vertexOffset+colorOffset+offset2] = color;
-                uintbuf[vertexOffset+colorOffset+offset3] = color;
-                vertexOffset += offset4;
             }
         }
+    }
+}
 
-        // update indices
-        let length = renderData.indiceCount;
-        for (let i = 0; i < length; i+=6) {
-            ibuf[indiceOffset++] = vertexId;
-            ibuf[indiceOffset++] = vertexId+1;
-            ibuf[indiceOffset++] = vertexId+2;
-            ibuf[indiceOffset++] = vertexId+1;
-            ibuf[indiceOffset++] = vertexId+3;
-            ibuf[indiceOffset++] = vertexId+2;
-            vertexId += 4;
-        }
-    },
-};

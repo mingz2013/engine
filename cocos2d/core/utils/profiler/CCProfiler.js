@@ -31,90 +31,17 @@ const PerfCounter = require('./perf-counter');
 let _showFPS = false;
 let _fontSize = 15;
 
-let _atlas = null;
 let _stats = null;
 let _rootNode = null;
 let _label = null;
-
-function generateAtlas () {
-    if (_atlas) return;
-
-    let textureWidth = 256,
-        textureHeight = 256;
-
-    let canvas = document.createElement("canvas");
-    canvas.style.width = canvas.width = textureWidth;
-    canvas.style.height = canvas.height = textureHeight;
-
-    // comment out this to show atlas
-    // document.body.appendChild(canvas)
-
-    let ctx = canvas.getContext('2d');
-    ctx.font = `${_fontSize}px Arial`;
-    ctx.textBaseline = 'top';
-    ctx.textAlign = 'left';
-    ctx.fillStyle = '#fff';
-    
-    let space = 2;
-    let x = space;
-    let y = space;
-    let lineHeight = _fontSize;
-
-    _atlas = new cc.LabelAtlas();
-    _atlas._fntConfig = {
-        atlasName: 'profiler-arial',
-        commonHeight: lineHeight,
-        fontSize: _fontSize,
-        kerningDict: {},
-        fontDefDictionary: {}
-    };
-
-    _atlas._name = 'profiler-arial';
-    _atlas.fontSize = _fontSize;
-
-    let dict = _atlas._fntConfig.fontDefDictionary;
-    
-    for (let i = 32; i <= 126; i++) {
-        let char = String.fromCharCode(i);
-        let width = ctx.measureText(char).width;
-    
-        if ((x + width) >= textureWidth) {
-            x = space;
-            y += lineHeight + space;
-        }
-        ctx.fillText(char, x, y);
-
-        dict[i] = {
-            xAdvance: width,
-            xOffset: 0,
-            yOffset: 0,
-            rect: {
-                x: x,
-                y: y,
-                width: width,
-                height: lineHeight
-            }
-        }
-
-        x += width + space;
-    }
-
-    let texture = new cc.Texture2D();
-    texture.initWithElement(canvas);
-
-    let spriteFrame = new cc.SpriteFrame();
-    spriteFrame.setTexture(texture);
-
-    _atlas.spriteFrame = spriteFrame;
-}
 
 function generateStats () {
     if (_stats) return;
     
     _stats = {
-        frame: { desc: 'Frame time (ms)', min: 0, max: 50, average: 500 },
         fps: { desc: 'Framerate (FPS)', below: 30, average: 500 },
-        draws: { desc: 'Draw call' },
+        draws: { desc: 'Draw Call' },
+        frame: { desc: 'Frame time (ms)', min: 0, max: 50, average: 500 },
         logic: { desc: 'Game Logic (ms)', min: 0, max: 50, average: 500, color: '#080' },
         render: { desc: 'Renderer (ms)', min: 0, max: 50, average: 500, color: '#f90' },
         mode: { desc: cc.game.renderType === cc.game.RENDER_TYPE_WEBGL ? 'WebGL' : 'Canvas', min: 1 }
@@ -141,22 +68,25 @@ function generateNode () {
 
     let left = new cc.Node('LEFT-PANEL');
     left.anchorX = left.anchorY = 0;
-    left.parent = _rootNode;
     let leftLabel = left.addComponent(cc.Label);
-    leftLabel.font = _atlas;
     leftLabel.fontSize = _fontSize;
     leftLabel.lineHeight = _fontSize;
+    left.parent = _rootNode;
 
     let right = new cc.Node('RIGHT-PANEL');
     right.anchorX = 1;
     right.anchorY = 0;
     right.x = 200;
-    right.parent = _rootNode;
     let rightLabel = right.addComponent(cc.Label);
     rightLabel.horizontalAlign = cc.Label.HorizontalAlign.RIGHT;
-    rightLabel.font = _atlas;
     rightLabel.fontSize = _fontSize;
     rightLabel.lineHeight = _fontSize;
+    right.parent = _rootNode;
+    if (cc.sys.platform !== cc.sys.BAIDU_GAME_SUB &&
+        cc.sys.platform !== cc.sys.WECHAT_GAME_SUB) {
+        leftLabel.cacheMode = cc.Label.CacheMode.CHAR;
+        rightLabel.cacheMode = cc.Label.CacheMode.CHAR;
+    }
 
     _label = {
         left: leftLabel,
@@ -207,8 +137,10 @@ function afterDraw () {
         right += stat._counter.human() + '\n';
     }
 
-    _label.left.string = left;
-    _label.right.string = right;
+    if (_label) {
+        _label.left.string = left;
+        _label.right.string = right;
+    }
 }
 
 cc.profiler = module.exports = {
@@ -231,7 +163,6 @@ cc.profiler = module.exports = {
 
     showStats () {
         if (!_showFPS) {
-            generateAtlas();
             generateStats();
 
             if (_rootNode) {

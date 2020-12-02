@@ -110,32 +110,41 @@ class TextureParser {
     }
 }
 
-const RAW_SKELETON_FILE = 'raw-skeleton.json';
-
 class SpineMeta extends CustomAssetMeta {
     constructor (assetdb) {
         super(assetdb);
         this.textures = [];
-        this.atlas = '';
         this.scale = 1;
+    }
+
+    dests () {
+        let rawPath = this._assetdb.uuidToFspath(this.uuid);
+        let importPathNoExt = this._assetdb._uuidToImportPathNoExt(this.uuid);
+    
+        let jsonPath = importPathNoExt + '.json';
+        let extname = Path.extname(rawPath);
+        let nativePath = importPathNoExt + extname;
+        return [jsonPath, nativePath];
     }
 
     // HACK - for inspector
     get texture () {
-        //return this.textures[0];
         return Editor.assetdb.uuidToUrl(this.textures[0]);
     }
     set texture (value) {
         this.textures[0] = Editor.assetdb.urlToUuid(value);
-        //this.textures[0] = value;
     }
 
-    static version () { return '1.2.0'; }
+    static version () { return '1.2.3'; }
     static defaultType () {
         return 'spine';
     }
 
     static validate (assetpath) {
+        // handle binary file
+        if (assetpath.endsWith(".skel")) {
+            return true;
+        }
         // TODO - import as a folder named '***.spine'
         var json;
         var text = Fs.readFileSync(assetpath, 'utf8');
@@ -159,18 +168,35 @@ class SpineMeta extends CustomAssetMeta {
         }
         return false;
     }
-
-    dests () {
-        var res = super.dests();
-        // for JSB
-        res.push(Path.join(this._assetdb._uuidToImportPathNoExt(this.uuid), RAW_SKELETON_FILE));
-        if (this.atlas) {
-            res.push(this._assetdb.uuidToFspath(this.atlas));
-        }
-        return res;
-    }
     
-    postImport (fspath, cb) {
+    _initTexture (asset, fspath, cb) {
+        loadAtlasText(fspath, (err, res) => {
+            if (err) {
+                return cb(err);
+            }
+
+            var db = this._assetdb;
+
+            // parse atlas textures
+            var textureParser = new TextureParser(res.atlasPath);
+
+            try {
+                new Spine.TextureAtlas(res.data, textureParser.load.bind(textureParser));
+            }
+            catch (err) {
+                return cb(new Error(`Failed to load atlas file: "${res.atlasPath}". ${err.stack || err}`));
+            }
+
+            this.textures = textureParser.textures;
+            asset.textures = textureParser.textures.map(Editor.serialize.asAsset);
+            asset.textureNames = textureParser.textureNames;
+            asset.atlasText = res.data;
+            db.saveAssetToLibrary(this.uuid, asset);
+            cb();
+        });
+    }
+
+    _importJson (fspath, cb) {
         Fs.readFile(fspath, SPINE_ENCODING, (err, data) => {
             if (err) {
                 return cb(err);
@@ -189,45 +215,44 @@ class SpineMeta extends CustomAssetMeta {
             asset.skeletonJson = json;
             asset.scale = this.scale;
 
-            loadAtlasText(fspath, (err, res) => {
-                if (err) {
-                    return cb(err);
-                }
-
-                var db = this._assetdb;
-
-                // parse atlas textures
-                var textureParser = new TextureParser(res.atlasPath);
-
-                try {
-                    new Spine.TextureAtlas(res.data, textureParser.load.bind(textureParser));
-                }
-                catch (err) {
-                    return cb(new Error(`Failed to load atlas file: "${res.atlasPath}". ${err.stack || err}`));
-                }
-
-                this.textures = textureParser.textures;
-                asset.textures = textureParser.textures.map(Editor.serialize.asAsset);
-                asset.textureNames = textureParser.textureNames;
-                //
-                asset.atlasText = res.data;
-                
-                // save raw assets for JSB..
-                
-                db.mkdirForAsset(this.uuid);
-                var rawJsonPath = Path.join(db._uuidToImportPathNoExt(this.uuid), RAW_SKELETON_FILE);
-                Fs.copySync(fspath, rawJsonPath);
-                asset._setRawAsset(RAW_SKELETON_FILE);
-
-                var atlasUuid = db.fspathToUuid(res.atlasPath);
-                this.atlas = atlasUuid;     // save for dest()
-                
-                //
-                
-                db.saveAssetToLibrary(this.uuid, asset);
-                cb();
-            });
+            this._initTexture(asset, fspath, cb);
         });
+    }
+
+    _importBinary (fspath, cb) {
+        // import native asset
+        // Since skel is not in the white list of the WeChat suffix, bin is used instead
+        let extname = ".bin";
+        let dest = this._assetdb._uuidToImportPathNoExt(this.uuid) + extname;
+        Fs.copy(fspath, dest, err => {
+            if (err) {
+                return cb(err);
+            }
+
+            // import asset
+            let asset = new sp.SkeletonData();
+            asset.name = Path.basenameNoExt(fspath);
+            asset._setRawAsset(extname);
+            asset.scale = this.scale;
+
+            this._initTexture(asset, fspath, cb);
+        });
+    }
+
+    import (fspath, cb) {
+        if (fspath.endsWith(".skel")) {
+            this._importBinary(fspath, cb);
+        } else {
+            super.import(fspath, cb);
+        }
+    }
+
+    postImport (fspath, cb) {
+        if (!fspath.endsWith(".skel")) {
+            this._importJson(fspath, cb);
+        } else {
+            cb();
+        }
     }
 }
 

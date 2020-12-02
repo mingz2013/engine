@@ -24,6 +24,19 @@
  THE SOFTWARE.
  ****************************************************************************/
 
+let settingPlatform;
+ if (!CC_EDITOR) {
+    settingPlatform = window._CCSettings ? _CCSettings.platform: undefined;
+ }
+const isVivoGame = (settingPlatform === 'qgame');
+const isOppoGame = (settingPlatform === 'quickgame');
+const isHuaweiGame = (settingPlatform === 'huawei');
+const isJKWGame = (settingPlatform === 'jkw-game');
+const isQttGame = (settingPlatform === 'qtt-game');
+const isLinkSure = (settingPlatform === 'link-sure');
+
+const _global = typeof window === 'undefined' ? global : window;
+ 
 function initSys () {
     /**
      * System variables
@@ -354,33 +367,90 @@ function initSys () {
      */
     sys.FB_PLAYABLE_ADS = 106;
     /**
+     * @property {Number} BAIDU_GAME
+     * @readOnly
+     * @default 107
+     */
+    sys.BAIDU_GAME = 107;
+    /**
+     * @property {Number} VIVO_GAME
+     * @readOnly
+     * @default 108
+     */
+    sys.VIVO_GAME = 108;
+    /**
+     * @property {Number} OPPO_GAME
+     * @readOnly
+     * @default 109
+     */
+    sys.OPPO_GAME = 109;
+    /**
+     * @property {Number} HUAWEI_GAME
+     * @readOnly
+     * @default 110
+     */
+    sys.HUAWEI_GAME = 110;
+    /**
+     * @property {Number} XIAOMI_GAME
+     * @readOnly
+     * @default 111
+     */
+    sys.XIAOMI_GAME = 111;
+    /**
+     * @property {Number} JKW_GAME
+     * @readOnly
+     * @default 112
+     */
+    sys.JKW_GAME = 112;
+    /**
+     * @property {Number} ALIPAY_GAME
+     * @readOnly
+     * @default 113
+     */
+    sys.ALIPAY_GAME = 113;
+    /**
+     * @property {Number} WECHAT_GAME_SUB
+     * @readOnly
+     * @default 114
+     */
+    sys.WECHAT_GAME_SUB = 114;
+    /**
+     * @property {Number} BAIDU_GAME_SUB
+     * @readOnly
+     * @default 115
+     */
+    sys.BAIDU_GAME_SUB = 115;
+    /**
+     * @property {Number} QTT_GAME
+     * @readOnly
+     * @default 116
+     */
+    sys.QTT_GAME = 116;
+    /**
+     * @property {Number} BYTEDANCE_GAME
+     * @readOnly
+     * @default 117
+     */
+    sys.BYTEDANCE_GAME = 117;
+    /**
+     * @property {Number} BYTEDANCE_GAME_SUB
+     * @readOnly
+     * @default 118
+     */
+    sys.BYTEDANCE_GAME_SUB = 118;
+    /**
+     * @property {Number} LINKSURE
+     * @readOnly
+     * @default 119
+     */
+    sys.LINKSURE = 119;
+    /**
      * BROWSER_TYPE_WECHAT
      * @property {String} BROWSER_TYPE_WECHAT
      * @readOnly
      * @default "wechat"
      */
     sys.BROWSER_TYPE_WECHAT = "wechat";
-    /**
-     * BROWSER_TYPE_WECHAT_GAME
-     * @property {String} BROWSER_TYPE_WECHAT_GAME
-     * @readOnly
-     * @default "wechatgame"
-     */
-    sys.BROWSER_TYPE_WECHAT_GAME = "wechatgame";
-    /**
-     * BROWSER_TYPE_WECHAT_GAME_SUB
-     * @property {String} BROWSER_TYPE_WECHAT_GAME_SUB
-     * @readOnly
-     * @default "wechatgamesub"
-     */
-    sys.BROWSER_TYPE_WECHAT_GAME_SUB = "wechatgamesub";
-    /**
-     * BROWSER_TYPE_QQ_PLAY
-     * @property {String} BROWSER_TYPE_QQ_PLAY
-     * @readOnly
-     * @default "qqplay"
-     */
-    sys.BROWSER_TYPE_QQ_PLAY = "qqplay";
     /**
      *
      * @property {String} BROWSER_TYPE_ANDROID
@@ -395,6 +465,13 @@ function initSys () {
      * @default "ie"
      */
     sys.BROWSER_TYPE_IE = "ie";
+    /**
+     *
+     * @property {String} BROWSER_TYPE_EDGE
+     * @readOnly
+     * @default "edge"
+     */
+    sys.BROWSER_TYPE_EDGE = "edge";
     /**
      *
      * @property {String} BROWSER_TYPE_QQ
@@ -516,6 +593,13 @@ function initSys () {
     sys.BROWSER_TYPE_SOUGOU = "sogou";
     /**
      *
+     * @property {String} BROWSER_TYPE_HUAWEI
+     * @readOnly
+     * @default "huawei"
+     */
+    sys.BROWSER_TYPE_HUAWEI = "huawei";
+    /**
+     *
      * @property {String} BROWSER_TYPE_UNKNOWN
      * @readOnly
      * @default "unknown"
@@ -526,19 +610,68 @@ function initSys () {
      * Is native ? This is set to be true in jsb auto.
      * @property {Boolean} isNative
      */
-    sys.isNative = CC_JSB;
-
+    sys.isNative = CC_JSB || CC_RUNTIME;
 
     /**
      * Is web browser ?
      * @property {Boolean} isBrowser
      */
-    sys.isBrowser = typeof window === 'object' && typeof document === 'object' && !CC_WECHATGAME && !CC_QQPLAY && !CC_JSB;
+    sys.isBrowser = typeof window === 'object' && typeof document === 'object' && !CC_JSB && !CC_RUNTIME;
 
-    if (CC_EDITOR && Editor.isMainProcess) {
+    /**
+     * Is webgl extension support?
+     * @method glExtension
+     * @param name
+     * @return {Boolean}
+     */
+    sys.glExtension = function (name) {
+        return !!cc.renderer.device.ext(name);
+    }
+
+    /**
+     * Get max joint matrix size for skinned mesh renderer.
+     * @method getMaxJointMatrixSize
+     */
+    sys.getMaxJointMatrixSize = function () {
+        if (!sys._maxJointMatrixSize) {
+            const JOINT_MATRICES_SIZE = 50;
+            const LEFT_UNIFORM_SIZE = 10;
+
+            let gl = cc.game._renderContext;
+            let maxUniforms = Math.floor(gl.getParameter(gl.MAX_VERTEX_UNIFORM_VECTORS) / 4) - LEFT_UNIFORM_SIZE;
+            if (maxUniforms < JOINT_MATRICES_SIZE) {
+                sys._maxJointMatrixSize = 0;
+            }
+            else {
+                sys._maxJointMatrixSize = JOINT_MATRICES_SIZE;
+            }
+        }
+        return sys._maxJointMatrixSize;
+    };
+
+    /**
+     * !#en
+     * Returns the safe area of the screen (in design resolution). If the screen is not notched, the visibleRect will be returned by default.
+     * Currently supports Android, iOS and WeChat Mini Game platform.
+     * !#zh
+     * 返回手机屏幕安全区域（设计分辨率为单位），如果不是异形屏将默认返回 visibleRect。目前支持安卓、iOS 原生平台和微信小游戏平台。
+     * @method getSafeAreaRect
+     * @return {Rect}
+    */
+   sys.getSafeAreaRect = function () {
+        let visibleSize = cc.view.getVisibleSize();
+        return cc.rect(0, 0, visibleSize.width, visibleSize.height);
+    };
+
+    if (_global.__globalAdapter && _global.__globalAdapter.adaptSys) {
+        // init sys info in adapter
+        _global.__globalAdapter.adaptSys(sys);
+    }
+    else if (CC_EDITOR && Editor.isMainProcess) {
         sys.isMobile = false;
         sys.platform = sys.EDITOR_CORE;
         sys.language = sys.LANGUAGE_UNKNOWN;
+        sys.languageCode = undefined;
         sys.os = ({
             darwin: sys.OS_OSX,
             win32: sys.OS_WINDOWS,
@@ -550,19 +683,50 @@ function initSys () {
             width: 0,
             height: 0
         };
+        sys.capabilities = {
+            'imageBitmap': false
+        };
         sys.__audioSupport = {};
     }
-    else if (CC_JSB) {
-        var platform = sys.platform = __getPlatform();
+    else if (CC_JSB || CC_RUNTIME) {
+        let platform;
+        if (isVivoGame) {
+            platform = sys.VIVO_GAME;
+        } else if (isOppoGame) {
+            platform = sys.OPPO_GAME;
+        } else if (isHuaweiGame) {
+            platform = sys.HUAWEI_GAME;
+        } else if (isJKWGame) {
+            platform = sys.JKW_GAME;
+        } else if (isQttGame) {
+            platform = sys.QTT_GAME;
+        } else if (isLinkSure) {
+            platform = sys.LINKSURE;
+        }
+        else {
+            platform = __getPlatform();
+        }
+        sys.platform = platform;
         sys.isMobile = (platform === sys.ANDROID ||
                         platform === sys.IPAD ||
                         platform === sys.IPHONE ||
                         platform === sys.WP8 ||
                         platform === sys.TIZEN ||
-                        platform === sys.BLACKBERRY);
+                        platform === sys.BLACKBERRY ||
+                        platform === sys.XIAOMI_GAME ||
+                        isVivoGame ||
+                        isOppoGame ||
+                        isHuaweiGame ||
+                        isJKWGame ||
+                        isQttGame);
 
         sys.os = __getOS();
         sys.language = __getCurrentLanguage();
+        var languageCode; 
+        if (CC_JSB) {
+            languageCode = __getCurrentLanguageCode();
+        }
+        sys.languageCode = languageCode ? languageCode.toLowerCase() : undefined;
         sys.osVersion = __getOSVersion();
         sys.osMainVersion = parseInt(sys.osVersion);
         sys.browserType = null;
@@ -595,108 +759,8 @@ function initSys () {
             capabilities["touches"] = false;
         }
 
-        sys.__audioSupport = {
-            ONLY_ONE: false,
-            WEB_AUDIO: false,
-            DELAY_CREATE_CTX: false,
-            format: ['.mp3']
-        };
-    }
-    else if (CC_WECHATGAME) {
-        var env = wx.getSystemInfoSync();
-        sys.isMobile = true;
-        sys.platform = sys.WECHAT_GAME;
-        sys.language = env.language.substr(0, 2);
-        var system = env.system.toLowerCase();
-        if (env.platform === "android") {
-            sys.os = sys.OS_ANDROID;
-        }
-        else if (env.platform === "ios") {
-            sys.os = sys.OS_IOS;
-        }
-        else if (env.platform === 'devtools') {
-            sys.isMobile = false;
-            if (system.indexOf('android') > -1) {
-                sys.os = sys.OS_ANDROID;
-            }
-            else if (system.indexOf('ios') > -1) {
-                sys.os = sys.OS_IOS;
-            }
-        }
-        // Adaptation to Android P
-        if (system === 'android p') {
-            system = 'android p 9.0';
-        }
+        capabilities['imageBitmap'] = false;
 
-        var version = /[\d\.]+/.exec(system);
-        sys.osVersion = version ? version[0] : system;
-        sys.osMainVersion = parseInt(sys.osVersion);
-        // wechagame subdomain
-        if (!wx.getFileSystemManager) {
-            sys.browserType = sys.BROWSER_TYPE_WECHAT_GAME_SUB;
-        }
-        else {
-            sys.browserType = sys.BROWSER_TYPE_WECHAT_GAME;
-        }
-        sys.browserVersion = env.version;
-
-        var w = env.windowWidth;
-        var h = env.windowHeight;
-        var ratio = env.pixelRatio || 1;
-        sys.windowPixelResolution = {
-            width: ratio * w,
-            height: ratio * h
-        };
-
-        sys.localStorage = window.localStorage;
-
-        sys.capabilities = {
-            "canvas": true,
-            "opengl": (sys.browserType !== sys.BROWSER_TYPE_WECHAT_GAME_SUB),
-            "webp": false
-        };
-        sys.__audioSupport = {
-            ONLY_ONE: false,
-            WEB_AUDIO: false,
-            DELAY_CREATE_CTX: false,
-            format: ['.mp3']
-        };
-    }
-    else if (CC_QQPLAY) {
-        var env = window["BK"]["Director"]["queryDeviceInfo"]();
-        sys.isMobile = true;
-        sys.platform = sys.QQ_PLAY;
-        sys.language = sys.LANGUAGE_UNKNOWN;
-        if (env.platform === "android") {
-            sys.os = sys.OS_ANDROID;
-        }
-        else if (env.platform === "ios") {
-            sys.os = sys.OS_IOS;
-        }
-        else {
-            sys.os = sys.OS_UNKNOWN;
-        }
-        sys.osVersion = env.version;
-        sys.osMainVersion = parseInt(sys.osVersion.split('.')[0]);
-        sys.browserType = sys.BROWSER_TYPE_QQ_PLAY;
-        sys.browserVersion = 0;
-
-        var w = env.screenWidth;
-        var h = env.screenHeight;
-        var ratio = env.pixelRatio || 1;
-
-        sys.windowPixelResolution = {
-            width: ratio * w,
-            height: ratio * h
-        };
-
-        sys.localStorage = window.localStorage;
-
-        sys.capabilities = {
-            "canvas": false,
-            "opengl": true,
-            "webp": false
-        };
         sys.__audioSupport = {
             ONLY_ONE: false,
             WEB_AUDIO: false,
@@ -734,6 +798,15 @@ function initSys () {
 
         var currLanguage = nav.language;
         currLanguage = currLanguage ? currLanguage : nav.browserLanguage;
+
+        /**
+         * Get current language iso 639-1 code.
+         * Examples of valid language codes include "zh-tw", "en", "en-us", "fr", "fr-fr", "es-es", etc.
+         * The actual value totally depends on results provided by destination platform.
+         * @property {String} languageCode
+         */
+        sys.languageCode = currLanguage.toLowerCase();
+
         currLanguage = currLanguage ? currLanguage.split("-")[0] : sys.LANGUAGE_ENGLISH;
 
         /**
@@ -744,7 +817,7 @@ function initSys () {
 
         // Get the os of system
         var isAndroid = false, iOS = false, osVersion = '', osMainVersion = 0;
-        var uaResult = /android (\d+(?:\.\d+)+)/i.exec(ua) || /android (\d+(?:\.\d+)+)/i.exec(nav.platform);
+        var uaResult = /android\s*(\d+(?:\.\d+)*)/i.exec(ua) || /android\s*(\d+(?:\.\d+)*)/i.exec(nav.platform);
         if (uaResult) {
             isAndroid = true;
             osVersion = uaResult[1] || '';
@@ -756,7 +829,12 @@ function initSys () {
             osVersion = uaResult[2] || '';
             osMainVersion = parseInt(osVersion) || 0;
         }
-        else if (/(iPhone|iPad|iPod)/.exec(nav.platform)) {
+        // refer to https://github.com/cocos-creator/engine/pull/5542 , thanks for contribition from @krapnikkk
+        // ipad OS 13 safari identifies itself as "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) AppleWebKit/605.1.15 (KHTML, like Gecko)" 
+        // so use maxTouchPoints to check whether it's desktop safari or not. 
+        // reference: https://stackoverflow.com/questions/58019463/how-to-detect-device-name-in-safari-on-ios-13-while-it-doesnt-show-the-correct
+        // FIXME: should remove it when touch-enabled macs are available
+        else if (/(iPhone|iPad|iPod)/.exec(nav.platform) || (nav.platform === 'MacIntel' && nav.maxTouchPoints && nav.maxTouchPoints > 1)) { 
             iOS = true;
             osVersion = '';
             osMainVersion = 0;
@@ -788,50 +866,45 @@ function initSys () {
 
         /**
          * Indicate the running browser type
-         * @property {String} browserType
+         * @property {String | null} browserType
          */
         sys.browserType = sys.BROWSER_TYPE_UNKNOWN;
         /* Determine the browser type */
         (function(){
-            var typeReg1 = /mqqbrowser|micromessenger|qq|sogou|qzone|liebao|maxthon|ucbs|360 aphone|360browser|baiduboxapp|baidubrowser|maxthon|mxbrowser|miuibrowser/i;
-            var typeReg2 = /qqbrowser|ucbrowser/i;
+            var typeReg1 = /mqqbrowser|micromessenger|qqbrowser|sogou|qzone|liebao|maxthon|ucbs|360 aphone|360browser|baiduboxapp|baidubrowser|maxthon|mxbrowser|miuibrowser/i;
+            var typeReg2 = /qq|ucbrowser|ubrowser|edge|HuaweiBrowser/i;
             var typeReg3 = /chrome|safari|firefox|trident|opera|opr\/|oupeng/i;
-            var browserTypes = typeReg1.exec(ua);
-            if(!browserTypes) browserTypes = typeReg2.exec(ua);
-            if(!browserTypes) browserTypes = typeReg3.exec(ua);
+            var browserTypes = typeReg1.exec(ua) || typeReg2.exec(ua) || typeReg3.exec(ua);
 
             var browserType = browserTypes ? browserTypes[0].toLowerCase() : sys.BROWSER_TYPE_UNKNOWN;
-            if (CC_WECHATGAME)
-                browserType = sys.BROWSER_TYPE_WECHAT_GAME;
-            else if (CC_QQPLAY)
-                browserType = sys.BROWSER_TYPE_QQ_PLAY;
-            else if (browserType === 'micromessenger')
-                browserType = sys.BROWSER_TYPE_WECHAT;
-            else if (browserType === "safari" && isAndroid)
+
+            if (browserType === "safari" && isAndroid)
                 browserType = sys.BROWSER_TYPE_ANDROID;
             else if (browserType === "qq" && ua.match(/android.*applewebkit/i))
                 browserType = sys.BROWSER_TYPE_ANDROID;
-            else if (browserType === "trident")
-                browserType = sys.BROWSER_TYPE_IE;
-            else if (browserType === "360 aphone")
-                browserType = sys.BROWSER_TYPE_360;
-            else if (browserType === "mxbrowser")
-                browserType = sys.BROWSER_TYPE_MAXTHON;
-            else if (browserType === "opr/")
-                browserType = sys.BROWSER_TYPE_OPERA;
-
-            sys.browserType = browserType;
+            let typeMap = {
+                'micromessenger': sys.BROWSER_TYPE_WECHAT,
+                'trident': sys.BROWSER_TYPE_IE,
+                'edge': sys.BROWSER_TYPE_EDGE,
+                '360 aphone': sys.BROWSER_TYPE_360,
+                'mxbrowser': sys.BROWSER_TYPE_MAXTHON,
+                'opr/': sys.BROWSER_TYPE_OPERA,
+                'ubrowser': sys.BROWSER_TYPE_UC,
+                'huaweibrowser': sys.BROWSER_TYPE_HUAWEI,
+            };
+            
+            sys.browserType = typeMap[browserType] || browserType;
         })();
 
         /**
          * Indicate the running browser version
-         * @property {String} browserVersion
+         * @property {String | null} browserVersion
          */
         sys.browserVersion = "";
         /* Determine the browser version number */
         (function(){
-            var versionReg1 = /(mqqbrowser|micromessenger|qq|sogou|qzone|liebao|maxthon|uc|ucbs|360 aphone|360|baiduboxapp|baidu|maxthon|mxbrowser|miui(?:.hybrid)?)(mobile)?(browser)?\/?([\d.]+)/i;
-            var versionReg2 = /(qqbrowser|chrome|safari|firefox|trident|opera|opr\/|oupeng)(mobile)?(browser)?\/?([\d.]+)/i;
+            var versionReg1 = /(mqqbrowser|micromessenger|qqbrowser|sogou|qzone|liebao|maxthon|uc|ucbs|360 aphone|360|baiduboxapp|baidu|maxthon|mxbrowser|miui(?:.hybrid)?)(mobile)?(browser)?\/?([\d.]+)/i;
+            var versionReg2 = /(qq|chrome|safari|firefox|trident|opera|opr\/|oupeng)(mobile)?(browser)?\/?([\d.]+)/i;
             var tmp = ua.match(versionReg1);
             if(!tmp) tmp = ua.match(versionReg2);
             sys.browserVersion = tmp ? tmp[4] : "";
@@ -901,9 +974,6 @@ function initSys () {
         if (CC_TEST) {
             _supportWebGL = false;
         }
-        else if (sys.browserType === sys.BROWSER_TYPE_WECHAT_GAME) {
-            _supportWebGL = true;
-        }
         else if (win.WebGLRenderingContext) {
             _supportWebGL = true;
         }
@@ -916,7 +986,16 @@ function initSys () {
             "canvas": _supportCanvas,
             "opengl": _supportWebGL,
             "webp": _supportWebp,
+            'imageBitmap': false,
         };
+
+        if (typeof createImageBitmap !== 'undefined' && typeof Blob !== 'undefined') {
+            _tmpCanvas1.width = _tmpCanvas1.height = 2;
+            createImageBitmap(_tmpCanvas1, {}).then(imageBitmap => {
+                capabilities.imageBitmap = true;
+                imageBitmap.close && imageBitmap.close();
+            }).catch(err => {});
+        }
         if (docEle['ontouchstart'] !== undefined || doc['ontouchstart'] !== undefined || nav.msPointerEnabled)
             capabilities["touches"] = true;
         if (docEle['onmouseup'] !== undefined)
@@ -949,8 +1028,7 @@ function initSys () {
 
             // check if browser supports Web Audio
             // check Web Audio's context
-            var supportWebAudio = sys.browserType !== sys.BROWSER_TYPE_WECHAT_GAME &&
-                                !!(window.AudioContext || window.webkitAudioContext || window.mozAudioContext);
+            var supportWebAudio = !!(window.AudioContext || window.webkitAudioContext || window.mozAudioContext);
 
             __audioSupport = { ONLY_ONE: false, WEB_AUDIO: supportWebAudio, DELAY_CREATE_CTX: false };
 
@@ -1023,7 +1101,7 @@ function initSys () {
      * !#zh
      * 网络类型枚举
      *
-     * @enum NetworkType
+     * @enum sys.NetworkType
      */
     sys.NetworkType = {
         /**
@@ -1066,7 +1144,7 @@ function initSys () {
      * 获取当前设备的网络类型, 如果网络类型无法获取，默认将返回 cc.sys.NetworkType.LAN
      *
      * @method getNetworkType
-     * @return {NetworkType}
+     * @return {sys.NetworkType}
      */
     sys.getNetworkType = function() {
         // TODO: need to implement this for mobile phones.
@@ -1101,20 +1179,6 @@ function initSys () {
      */
     sys.restartVM = function () {
         // N/A in web
-    };
-
-    /**
-     * !#en
-     * Return the safe area rect. <br/>
-     * only available on the iOS native platform, otherwise it will return a rect with design resolution size.
-     * !#zh
-     * 返回手机屏幕安全区域，目前仅在 iOS 原生平台有效。其它平台将默认返回设计分辨率尺寸。
-     * @method getSafeAreaRect
-     * @return {Rect}
-    */
-    sys.getSafeAreaRect = function () {
-        let visibleSize = cc.view.getVisibleSize();
-        return cc.rect(0, 0, visibleSize.width, visibleSize.height);
     };
 
     /**
@@ -1157,7 +1221,7 @@ function initSys () {
      * @param {String} url
      */
     sys.openURL = function (url) {
-        if (CC_JSB) {
+        if (CC_JSB || CC_RUNTIME) {
             jsb.openURL(url);
         }
         else {

@@ -146,14 +146,6 @@ var BaseNode = cc.Class({
         _active: true,
 
         /**
-         * @property _level
-         * @type {Number}
-         * @default 0
-         * @private
-         */
-        _level: 0,
-
-        /**
          * @property _components
          * @type {Component[]}
          * @default []
@@ -213,6 +205,9 @@ var BaseNode = cc.Class({
                     return;
                 }
                 this._name = value;
+                if (CC_JSB && CC_NATIVERENDERER) {
+                    this._proxy.setName(this._name);
+                }
             },
         },
 
@@ -333,8 +328,6 @@ var BaseNode = cc.Class({
          * @private
          */
         this.__eventTargets = [];
-
-        this._renderFlag = RenderFlow.FLAG_TRANSFORM;
     },
     /** 
      * !#en The parent of the node.
@@ -369,7 +362,7 @@ var BaseNode = cc.Class({
             return;
         }
         if (CC_EDITOR && cc.engine && !cc.engine.isPlaying) {
-            if (_Scene.DetectConflict.beforeAddChild(this)) {
+            if (_Scene.DetectConflict.beforeAddChild(this, value)) {
                 return;
             }
         }
@@ -385,7 +378,6 @@ var BaseNode = cc.Class({
             if (CC_DEBUG && (value._objFlags & Deactivating)) {
                 cc.errorID(3821);
             }
-            this._level = value._level + 1;
             eventManager._setDirtyForNode(this);
             value._children.push(this);
             value.emit && value.emit(CHILD_ADDED, this);
@@ -614,6 +606,7 @@ var BaseNode = cc.Class({
             stack[index] = null;
             // Do not repeatly visit child tree, just do post call and continue walk
             if (afterChildren) {
+                if (parent === this._parent) break;
                 afterChildren = false;
             }
             else {
@@ -684,7 +677,6 @@ var BaseNode = cc.Class({
      * 如果这个节点是一个孤节点，那么什么都不会发生。
      * @method removeFromParent
      * @param {Boolean} [cleanup=true] - true if all actions and callbacks on this node should be removed, false otherwise.
-     * @see cc.Node#removeFromParentAndCleanup
      * @example
      * node.removeFromParent();
      * node.removeFromParent(false);
@@ -790,9 +782,9 @@ var BaseNode = cc.Class({
      * @param {Function|String} typeOrClassName
      * @return {Component}
      * @example
-     * // get sprite component.
+     * // get sprite component
      * var sprite = node.getComponent(cc.Sprite);
-     * // get custom test calss.
+     * // get custom test class
      * var test = node.getComponent("Test");
      * @typescript
      * getComponent<T extends Component>(type: {prototype: T}): T
@@ -870,7 +862,7 @@ var BaseNode = cc.Class({
         return components;
     },
 
-    _checkMultipleComp: CC_EDITOR && function (ctor) {
+    _checkMultipleComp: (CC_EDITOR || CC_PREVIEW) && function (ctor) {
         var existing = this.getComponent(ctor._disallowMultiple);
         if (existing) {
             if (existing.constructor === ctor) {
@@ -935,7 +927,7 @@ var BaseNode = cc.Class({
             return null;
         }
 
-        if (CC_EDITOR && constructor._disallowMultiple) {
+        if ((CC_EDITOR || CC_PREVIEW) && constructor._disallowMultiple) {
             if (!this._checkMultipleComp(constructor)) {
                 return null;
             }
@@ -1115,8 +1107,7 @@ var BaseNode = cc.Class({
 
     _onSetParent (value) {},
     _onPostActivated () {},
-    _onBatchRestored () {},
-    _onBatchCreated () {},
+    _onBatchCreated (dontSyncChildPrefab) {},
 
     _onHierarchyChanged (oldParent) {
         var newParent = this._parent;
@@ -1147,12 +1138,23 @@ var BaseNode = cc.Class({
             if (myPrefabInfo) {
                 if (newPrefabRoot) {
                     if (myPrefabInfo.root !== newPrefabRoot) {
-                        // change prefab
-                        PrefabUtils.unlinkPrefab(this);
-                        PrefabUtils.linkPrefab(newPrefabRoot._prefab.asset, newPrefabRoot, this);
+                        if (myPrefabInfo.root === this) {
+                            // nest prefab
+                            myPrefabInfo.fileId || (myPrefabInfo.fileId = Editor.Utils.UuidUtils.uuid());
+                            PrefabUtils.checkCircularReference(myPrefabInfo.root);
+                        }
+                        else {
+                            // change prefab
+                            PrefabUtils.linkPrefab(newPrefabRoot._prefab.asset, newPrefabRoot, this);
+                            PrefabUtils.checkCircularReference(newPrefabRoot);
+                        }
                     }
                 }
-                else if (myPrefabInfo.root !== this) {
+                else if (myPrefabInfo.root === this) {
+                    // nested prefab to root prefab
+                    myPrefabInfo.fileId = '';   // root prefab doesn't have fileId
+                }
+                else {
                     // detach from prefab
                     PrefabUtils.unlinkPrefab(this);
                 }
@@ -1160,6 +1162,7 @@ var BaseNode = cc.Class({
             else if (newPrefabRoot) {
                 // attach to prefab
                 PrefabUtils.linkPrefab(newPrefabRoot._prefab.asset, newPrefabRoot, this);
+                PrefabUtils.checkCircularReference(newPrefabRoot);
             }
 
             // conflict detection
@@ -1172,31 +1175,31 @@ var BaseNode = cc.Class({
         }
     },
 
-    _instantiate (cloned) {
+    _instantiate (cloned, isSyncedNode) {
         if (!cloned) {
             cloned = cc.instantiate._clone(this, this);
         }
 
-        var thisPrefabInfo = this._prefab;
-        if (CC_EDITOR && thisPrefabInfo) {
-            if (this !== thisPrefabInfo.root) {
+        var newPrefabInfo = cloned._prefab;
+        if (CC_EDITOR && newPrefabInfo) {
+            if (cloned === newPrefabInfo.root) {
+                newPrefabInfo.fileId = '';
+            }
+            else {
                 var PrefabUtils = Editor.require('scene://utils/prefab');
-                PrefabUtils.initClonedChildOfPrefab(cloned);
+                PrefabUtils.unlinkPrefab(cloned);
             }
         }
-        var syncing = thisPrefabInfo && this === thisPrefabInfo.root && thisPrefabInfo.sync;
-        if (syncing) {
-            //if (thisPrefabInfo._synced) {
-            //    return clone;
-            //}
-        }
-        else if (CC_EDITOR && cc.engine._isPlaying) {
-            cloned._name += ' (Clone)';
+        if (CC_EDITOR && cc.engine._isPlaying) {
+            let syncing = newPrefabInfo && cloned === newPrefabInfo.root && newPrefabInfo.sync;
+            if (!syncing) {
+                cloned._name += ' (Clone)';
+            }
         }
 
         // reset and init
         cloned._parent = null;
-        cloned._onBatchRestored();
+        cloned._onBatchCreated(isSyncedNode);
 
         return cloned;
     },

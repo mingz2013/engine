@@ -346,9 +346,9 @@ cc.Scheduler.prototype = {
 
     //-----------------------public method-------------------------
     /**
-     * !en This method should be called for any target which needs to schedule tasks, and this method should be called before any scheduler API usage.
+     * !#en This method should be called for any target which needs to schedule tasks, and this method should be called before any scheduler API usage.
      * This method will add a `_id` property if it doesn't exist.
-     * !zh 任何需要用 Scheduler 管理任务的对象主体都应该调用这个方法，并且应该在调用任何 Scheduler API 之前调用这个方法。
+     * !#zh 任何需要用 Scheduler 管理任务的对象主体都应该调用这个方法，并且应该在调用任何 Scheduler API 之前调用这个方法。
      * 这个方法会给对象添加一个 `_id` 属性，如果这个属性不存在的话。
      * @method enableForTarget
      * @param {Object} target
@@ -776,7 +776,7 @@ cc.Scheduler.prototype = {
      * You should NEVER call this method, unless you know what you are doing.
      * !#zh
      * 取消所有对象的所有定时器，包括系统定时器。<br/>
-     * 不用调用此函数，除非你确定你在做什么。
+     * 不要调用此函数，除非你确定你在做什么。
      * @method unscheduleAll
      */
     unscheduleAll: function(){

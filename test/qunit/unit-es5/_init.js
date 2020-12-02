@@ -18,7 +18,6 @@ var Ticker = cc._Ticker;
 var Time = cc.Time;
 //var Camera = cc.Camera;
 //var Component = cc.Component;
-var LoadManager = cc._LoadManager;
 var AssetLibrary = cc.AssetLibrary;
 //var SpriteRenderer = cc.SpriteRenderer;
 //var Screen = cc.Screen;
@@ -39,7 +38,7 @@ var TestTexture = cc.Class({
          */
         width: {
             default: 0,
-            type: 'Integer',
+            type: cc.Integer,
             readonly: true
         },
 
@@ -49,7 +48,7 @@ var TestTexture = cc.Class({
          */
         height: {
             default: 0,
-            type: 'Integer',
+            type: cc.Integer,
             readonly: true
         },
     }
@@ -112,8 +111,8 @@ var TestDependency = cc.Class({
     extends: cc.Asset,
     properties: {
         dependency: {
-            default: '',
-            url: TestDependency,
+            default: null,
+            type: TestDependency,
         }
     }
 });
@@ -156,7 +155,11 @@ cc.engine = new (cc.Class({
 Editor.log = cc.log;
 Editor.warn = cc.warn;
 Editor.error = cc.error;
-Editor.Utils = Editor.Utils || {};
+Editor.Utils = Editor.Utils || {
+    UuidUtils: {
+        uuid: function () { return '' + Math.floor(Math.random() * 100000000) + Math.floor(Math.random() * 100000000); }
+    }
+};
 Editor.Utils.UuidCache = {};
 
 var assetDir = '../test/qunit/assets';
@@ -211,9 +214,8 @@ function _resetGame (w, h) {
     }
     // Forbid render in test
     cc.renderer.render = function () {};
-    cc.director.purgeDirector();
     cc.loader.releaseAll();
-
+    cc.director.reset();
     cc.director.runSceneImmediate(new cc.Scene());
     //cc.director.pause();
 }
@@ -296,6 +298,8 @@ function createNodes (data) {
     createNode(data, 'root');
     return nodes;
 }
+
+var ImageBitmapOrImage = window.ImageBitmap || window.Image;
 
 // output test states
 

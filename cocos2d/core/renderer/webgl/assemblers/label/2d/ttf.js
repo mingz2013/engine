@@ -23,53 +23,79 @@
  THE SOFTWARE.
  ****************************************************************************/
 
-const js = require('../../../../../platform/js');
-const ttfUtls = require('../../../../utils/label/ttf');
-const fillVertices = require('../../utils').fillVertices;
+import TTFAssembler from '../../../../utils/label/ttf';
 
+const LabelShadow = require('../../../../../components/CCLabelShadow');
 const WHITE = cc.color(255, 255, 255, 255);
 
-module.exports = js.addon({
-    createData (comp) {
-        let renderData = comp.requestRenderData();
-
-        renderData.dataLength = 4;
-        renderData.vertexCount = 4;
-        renderData.indiceCount = 6;
-
-        let data = renderData._data;
-        data[0].u = 0;
-        data[0].v = 1;
-        data[1].u = 1;
-        data[1].v = 1;
-        data[2].u = 0;
-        data[2].v = 0;
-        data[3].u = 1;
-        data[3].v = 0;
-        return renderData;
-    },
-
-    fillBuffers (comp, renderer) {
-        fillVertices(comp.node, renderer._quadBuffer, comp._renderData, WHITE._val);
-    },
-
-    _updateVerts (comp) {
-        let renderData = comp._renderData;
-
-        let node = comp.node,
-            width = node.width,
-            height = node.height,
-            appx = node.anchorX * width,
-            appy = node.anchorY * height;
-
-        let data = renderData._data;
-        data[0].x = -appx;
-        data[0].y = -appy;
-        data[1].x = width - appx;
-        data[1].y = -appy;
-        data[2].x = -appx;
-        data[2].y = height - appy;
-        data[3].x = width - appx;
-        data[3].y = height - appy;
+export default class WebglTTFAssembler extends TTFAssembler {
+    updateUVs (comp) {
+        let verts = this._renderData.vDatas[0];
+        let uv = comp._frame.uv;
+        let uvOffset = this.uvOffset;
+        let floatsPerVert = this.floatsPerVert;
+        for (let i = 0; i < 4; i++) {
+            let srcOffset = i * 2;
+            let dstOffset = floatsPerVert * i + uvOffset;
+            verts[dstOffset] = uv[srcOffset];
+            verts[dstOffset + 1] = uv[srcOffset + 1];
+        }
     }
-}, ttfUtls);
+
+    updateColor (comp) {
+        WHITE._fastSetA(comp.node._color.a);
+        let color = WHITE._val;
+
+        super.updateColor(comp, color);
+    }
+
+    updateVerts (comp) {
+        let node = comp.node,
+            canvasWidth = comp._ttfTexture.width,
+            canvasHeight = comp._ttfTexture.height,
+            appx = node.anchorX * node.width,
+            appy = node.anchorY * node.height;
+
+        let shadow = LabelShadow && comp.getComponent(LabelShadow);
+        if (shadow && shadow._enabled) {
+            // adapt size changed caused by shadow
+            let offsetX = (canvasWidth - node.width) / 2;
+            let offsetY = (canvasHeight - node.height) / 2;
+
+            let shadowOffset = shadow.offset;
+            if (-shadowOffset.x > offsetX) {
+                // expand to left
+                appx += (canvasWidth - node.width);
+            }
+            else if (offsetX > shadowOffset.x) {
+                // expand to left and right
+                appx += (offsetX - shadowOffset.x);
+            }
+            else {
+                // expand to right, no need to change render position
+            }
+
+            if (-shadowOffset.y > offsetY) {
+                // expand to top
+                appy += (canvasHeight - node.height);
+            }
+            else if (offsetY > shadowOffset.y) {
+                // expand to top and bottom
+                appy += (offsetY - shadowOffset.y);
+            }
+            else {
+                // expand to bottom, no need to change render position
+            }
+        }
+
+        let local = this._local;
+        local[0] = -appx;
+        local[1] = -appy;
+        local[2] = canvasWidth - appx;
+        local[3] = canvasHeight - appy;
+
+        this.updateUVs(comp);
+        this.updateWorldVerts(comp);
+    }
+}
+

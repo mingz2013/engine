@@ -23,14 +23,11 @@
  THE SOFTWARE.
  ****************************************************************************/
 
-const js = require('../../../../../platform/js');
-const assembler = require('../2d/ttf');
-const fillVertices3D = require('../../utils').fillVertices3D;
+const Assembler3D = require('../../../../assembler-3d');
+const WebglTTFAssembler = require('../2d/ttf');
 
-const WHITE = cc.color(255, 255, 255, 255);
+export default class WebglTTFAssembler3D extends WebglTTFAssembler {
 
-module.exports = js.addon({
-    fillBuffers (comp, renderer) {
-        fillVertices3D(comp.node, renderer._quadBuffer3D, comp._renderData, WHITE._val);
-    }
-}, assembler);
+}
+
+cc.js.mixin(WebglTTFAssembler3D.prototype, Assembler3D);

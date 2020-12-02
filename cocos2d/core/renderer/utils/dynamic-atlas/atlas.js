@@ -1,7 +1,9 @@
+const RenderTexture = require('../../../assets/CCRenderTexture');
+
 const space = 2;
 
 function Atlas (width, height) {
-    let texture = new cc.RenderTexture();
+    let texture = new RenderTexture();
     texture.initWithSize(width, height);
     texture.update();
     
@@ -16,7 +18,11 @@ function Atlas (width, height) {
 
     this._innerTextureInfos = {};
     this._innerSpriteFrames = [];
+
+    this._count = 0;
 }
+
+Atlas.DEFAULT_HASH = (new RenderTexture())._getHash();
 
 cc.js.mixin(Atlas.prototype, {
     insertSpriteFrame (spriteFrame) {
@@ -27,8 +33,8 @@ cc.js.mixin(Atlas.prototype, {
         let sx = rect.x, sy = rect.y;
 
         if (info) {
-            rect.x += info.x;
-            rect.y += info.y;
+            sx += info.x;
+            sy += info.y;
         }
         else {
             let width = texture.width, height = texture.height;        
@@ -38,19 +44,30 @@ cc.js.mixin(Atlas.prototype, {
                 this._y = this._nexty;
             }
 
-            if ((this._y + height) > this._nexty) {
+            if ((this._y + height + space) > this._nexty) {
                 this._nexty = this._y + height + space;
             }
 
             if (this._nexty > this._height) {
-                return false;
+                return null;
             }
 
             // texture bleeding
-            this._texture.drawTextureAt(texture, this._x-1, this._y);
-            this._texture.drawTextureAt(texture, this._x+1, this._y);
-            this._texture.drawTextureAt(texture, this._x, this._y-1);
-            this._texture.drawTextureAt(texture, this._x, this._y+1);
+            if (cc.dynamicAtlasManager.textureBleeding) {
+                // Smaller frame is more likely to be affected by linear filter
+                if (width <= 8 || height <= 8) {
+                    this._texture.drawTextureAt(texture, this._x-1, this._y-1);
+                    this._texture.drawTextureAt(texture, this._x-1, this._y+1);
+                    this._texture.drawTextureAt(texture, this._x+1, this._y-1);
+                    this._texture.drawTextureAt(texture, this._x+1, this._y+1);
+                }
+
+                this._texture.drawTextureAt(texture, this._x-1, this._y);
+                this._texture.drawTextureAt(texture, this._x+1, this._y);
+                this._texture.drawTextureAt(texture, this._x, this._y-1);
+                this._texture.drawTextureAt(texture, this._x, this._y+1);
+            }
+
             this._texture.drawTextureAt(texture, this._x, this._y);
 
             this._innerTextureInfos[texture._id] = {
@@ -59,26 +76,25 @@ cc.js.mixin(Atlas.prototype, {
                 texture: texture
             };
 
-            rect.x += this._x;
-            rect.y += this._y;
+            this._count++;
+
+            sx += this._x;
+            sy += this._y;
 
             this._x += width + space;
 
             this._dirty = true;
         }
 
-        spriteFrame._original = {
+        let frame = {
             x: sx,
             y: sy,
-            texture: spriteFrame._texture
+            texture: this._texture
         }
-
-        spriteFrame._texture = this._texture;
-        spriteFrame._calculateUV();
-
+        
         this._innerSpriteFrames.push(spriteFrame);
 
-        return true;
+        return frame;
     },
 
     update () {
@@ -87,6 +103,17 @@ cc.js.mixin(Atlas.prototype, {
         this._dirty = false;
     },
 
+    deleteInnerTexture (texture) {
+        if (texture && this._innerTextureInfos[texture._id]) {
+            delete this._innerTextureInfos[texture._id];
+            this._count--;
+        }
+    },
+
+    isEmpty () {
+        return this._count <= 0;
+    },
+    
     reset () {
         this._x = space;
         this._y = space;
@@ -98,12 +125,7 @@ cc.js.mixin(Atlas.prototype, {
             if (!frame.isValid) {
                 continue;
             }
-            let oriInfo = frame._original;
-            frame._rect.x = oriInfo.x;
-            frame._rect.y = oriInfo.y;
-            frame._texture = oriInfo.texture;
-            frame._calculateUV();
-            frame._original = null;
+            frame._resetDynamicAtlasFrame();
         }
         this._innerSpriteFrames.length = 0;
         this._innerTextureInfos = {};

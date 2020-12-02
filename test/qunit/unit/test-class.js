@@ -266,6 +266,11 @@ largeModule('Class ES6');
             p1 = null;
             @property
             p2 = null;
+            @property({
+                type: cc.Asset
+            })
+            get p3 () {}
+            set p3 (value) {}
         }
 
         deepEqual(Class.__values__, ['p2'], 'should not contain non-serializable properties');
@@ -797,9 +802,6 @@ largeModule('Class ES6');
             @property(cc.Node)
             node = [];
 
-            @property(cc.RawAsset)
-            rawAsset = [];
-
             @property({
                 type: cc.Asset
             })
@@ -813,52 +815,108 @@ largeModule('Class ES6');
         strictEqual(cc.Class.attr(ArrayType, 'valueType').ctor, cc.Vec2, 'checking array of vec2 ctor');
         strictEqual(cc.Class.attr(ArrayType, 'node').type, 'Object', 'checking array of node type');
         strictEqual(cc.Class.attr(ArrayType, 'node').ctor, cc.Node, 'checking array of node ctor');
-        strictEqual(cc.Class.attr(ArrayType, 'rawAsset').type, 'Object', 'checking array of raw asset type');
-        strictEqual(cc.Class.attr(ArrayType, 'rawAsset').ctor, cc.RawAsset, 'checking array of raw asset ctor');
 
         deepEqual(arrayObj.empty, [], 'checking array of empty');
         deepEqual(arrayObj.bool, [], 'checking array of bool');
         deepEqual(arrayObj.string, [], 'checking array of string');
         deepEqual(arrayObj.valueType, [], 'checking array of valueType');
         deepEqual(arrayObj.node, [], 'checking array of node');
-        deepEqual(arrayObj.rawAsset, [], 'checking array of rawAsset');
         deepEqual(arrayObj.asset, [], 'checking array of asset');
     });
 
-    // test('property', function () {
+    test('simplified properties define using cc.xxxType', function () {
+        @ccclass
+        class Type {
+            @property(cc.String)
+            string = '';
+            @property(cc.Boolean)
+            bool = false;
+            @property(cc.Float)
+            float = 0;
+            @property(cc.Integer)
+            int = 0;
+        }
+        @ccclass
+        class ArrayType {
+            @property([cc.String])
+            string = [];
+            @property([cc.Boolean])
+            bool = [];
+            @property([cc.Float])
+            float = [];
+            @property([cc.Integer])
+            int = [];
+        }
+
+        strictEqual(cc.Class.attr(Type, 'string').type, undefined, 'checking string type');
+        strictEqual(cc.Class.attr(Type, 'string').ctor, undefined, 'checking string ctor');
+        strictEqual(cc.Class.attr(Type, 'bool').type, undefined, 'checking bool type');
+        strictEqual(cc.Class.attr(Type, 'bool').ctor, undefined, 'checking bool ctor');
+        strictEqual(cc.Class.attr(Type, 'float').type, undefined, 'checking float type');
+        strictEqual(cc.Class.attr(Type, 'float').ctor, undefined, 'checking float ctor');
+        strictEqual(cc.Class.attr(Type, 'int').type, undefined, 'checking int type');
+        strictEqual(cc.Class.attr(Type, 'int').ctor, undefined, 'checking int ctor');
+
+        strictEqual(cc.Class.attr(ArrayType, 'string').type, cc.String, 'checking array of string type');
+        strictEqual(cc.Class.attr(ArrayType, 'string').ctor, undefined, 'checking array of string ctor');
+        strictEqual(cc.Class.attr(ArrayType, 'bool').type, cc.Boolean, 'checking array of bool type');
+        strictEqual(cc.Class.attr(ArrayType, 'bool').ctor, undefined, 'checking array of bool ctor');
+        strictEqual(cc.Class.attr(ArrayType, 'float').type, cc.Float, 'checking array of float type');
+        strictEqual(cc.Class.attr(ArrayType, 'float').ctor, undefined, 'checking array of float ctor');
+        strictEqual(cc.Class.attr(ArrayType, 'int').type, cc.Integer, 'checking array of int type');
+        strictEqual(cc.Class.attr(ArrayType, 'int').ctor, undefined, 'checking array of int ctor');
+
+        var obj = new Type();
+        var arrayObj = new ArrayType();
+
+        strictEqual(obj.string, '', 'checking default value of string');
+        strictEqual(obj.bool, false, 'checking default value of bool');
+        strictEqual(obj.float, 0, 'checking default value of float');
+        strictEqual(obj.int, 0, 'checking default value of int');
+
+        deepEqual(arrayObj.bool, [], 'checking array of bool');
+        deepEqual(arrayObj.string, [], 'checking array of string');
+        deepEqual(arrayObj.float, [], 'checking array of float');
+        deepEqual(arrayObj.int, [], 'checking array of int');
+    });
+
+    // test('formerlySerializedAs', function () {
     //     @ccclass
-    //     class Foo {
-    //         constructor () {
-    //             this.t = 1;
-    //         }
+    //     class MyClass0 {}
+    //     ok(!MyClass0.__FSA__, 'should not tagged as fsa on normal class');
     //
-    //         @property
-    //         bar = 'bork';
-    //
-    //         // @property({type: 'Float'})
-    //         get bbb () {
-    //             return this.bar;
-    //         }
-    //
-    //         @property
-    //         baz = () => {
-    //             return this.bar;
-    //         };
-    //
-    //         // @property('Integer')
-    //         set bbb (value) {
-    //             this.bar = value;
-    //         }
-    //
-    //         @property
-    //         heihei = 11111;
-    //
-    //         @property
-    //         set Heihei (value) {
-    //             this.bar = value;
-    //         }
+    //     @ccclass
+    //     class MyClass3 {
+    //         @property({ formerlySerializedAs: 'oldProp' })
+    //         prop = '';
     //     }
-    //     expect(0);
+    //     ok(MyClass3.__FSA__, 'should tagged as fsa on MyClass3');
+    //
+    //     @ccclass
+    //     class Base {
+    //         @property({ formerlySerializedAs: 'oldProp' })
+    //         prop = '';
+    //     }
+    //     @ccclass
+    //     class Mix {}
+    //     @ccclass
+    //     @mixins([Mix])
+    //     class MyClass extends Base {}
+    //     ok(MyClass.__FSA__, 'should tagged as fsa on MyClass');
+    //
+    //     @ccclass
+    //     class Base2 {}
+    //     @ccclass
+    //     class Mix2 {
+    //         @property({ formerlySerializedAs: 'oldProp' })
+    //         prop = '';
+    //     }
+    //     @ccclass
+    //     @mixins([Mix2])
+    //     class MyClass2 extends Base2 {}
+    //     ok(MyClass.__FSA__, 'should tagged as fsa on MyClass2');
+    //
+    //     cc.js.unregisterClass(Base, Mix, MyClass, Base2, Mix2, MyClass2, MyClass0, MyClass3);
     // });
 
     if (TestEditorExtends) {

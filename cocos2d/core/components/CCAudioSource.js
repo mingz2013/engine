@@ -45,8 +45,8 @@ var AudioSource = cc.Class({
 
     ctor: function () {
         // We can't require Audio here because jsb Audio is implemented outside the engine,
-        // it can only take effect rely on overwriting cc.Audio
-        this.audio = new cc.Audio();
+        // it can only take effect rely on overwriting cc._Audio
+        this.audio = new cc._Audio();
     },
 
     properties: {
@@ -61,6 +61,7 @@ var AudioSource = cc.Class({
             default: false,
             serializable: false
         },
+        _firstlyEnabled: true,
 
         /**
          * !#en
@@ -77,7 +78,7 @@ var AudioSource = cc.Class({
         isPlaying: {
             get: function () {
                 var state = this.audio.getState();
-                return state === cc.Audio.State.PLAYING;
+                return state === cc._Audio.State.PLAYING;
             },
             visible: false
         },
@@ -94,25 +95,17 @@ var AudioSource = cc.Class({
                 return this._clip;
             },
             set: function (value) {
-                if (typeof value === 'string') {
-                    // backward compatibility since 1.10
-                    cc.warnID(8401, 'cc.AudioSource', 'cc.AudioClip', 'AudioClip', 'cc.AudioClip', 'audio');
-                    let self = this;
-                    AudioClip._loadByUrl(value, function (err, clip) {
-                        if (clip) {
-                            self.clip = clip;
-                        }
-                    });
-                    return;
-                }
-
                 if (value === this._clip) {
                     return;
                 }
+                if (!(value instanceof AudioClip)) {
+                    return cc.error('Wrong type of AudioClip.');
+                }
                 this._clip = value;
                 this.audio.stop();
+                this.audio.src = this._clip;
                 if (this.preload) {
-                    this.audio.src = this._clip;
+                    this._clip._ensureLoaded();
                 }
             },
             type: AudioClip,
@@ -195,21 +188,22 @@ var AudioSource = cc.Class({
             animatable: false
         },
 
+        /**
+         * !#en If set to true and AudioClip is a deferred load resource, the component will preload AudioClip in the onLoad phase.
+         * !#zh 如果设置为 true 且 AudioClip 为延迟加载资源，组件将在 onLoad 阶段预加载 AudioClip。
+         * @property preload
+         * @type {Boolean}
+         * @default false
+         */
         preload: {
             default: false,
             animatable: false
         }
     },
 
-    _ensureDataLoaded () {
-        if (this.audio.src !== this._clip) {
-            this.audio.src = this._clip;
-        }
-    },
-
     _pausedCallback: function () {
         var state = this.audio.getState();
-        if (state === cc.Audio.State.PLAYING) {
+        if (state === cc._Audio.State.PLAYING) {
             this.audio.pause();
             this._pausedFlag = true;
         }
@@ -223,15 +217,18 @@ var AudioSource = cc.Class({
     },
 
     onLoad: function () {
-        this.audio.setVolume(this._mute ? 0 : this._volume);
-        this.audio.setLoop(this._loop);
+        // this.audio.src is undefined, when the clip property is deserialized from the scene
+        if (!this.audio.src) {
+            this.audio.src = this._clip;
+        }
+        if (this.preload) {
+            this._clip._ensureLoaded();
+        }
     },
 
     onEnable: function () {
-        if (this.preload) {
-            this.audio.src = this._clip;
-        }
-        if (this.playOnLoad) {
+        if (this.playOnLoad && this._firstlyEnabled) {
+            this._firstlyEnabled = false;
             this.play();
         }
         cc.game.on(cc.game.EVENT_HIDE, this._pausedCallback, this);
@@ -245,9 +242,7 @@ var AudioSource = cc.Class({
     },
 
     onDestroy: function () {
-        this.stop();
         this.audio.destroy();
-        cc.audioEngine.uncache(this._clip);
     },
 
     /**
@@ -259,10 +254,8 @@ var AudioSource = cc.Class({
         if ( !this._clip ) return;
 
         var audio = this.audio;
-        if (this._clip.loaded) {
-            audio.stop();
-        }
-        this._ensureDataLoaded();
+        audio.setVolume(this._mute ? 0 : this._volume);
+        audio.setLoop(this._loop);
         audio.setCurrentTime(0);
         audio.play();
     },
@@ -291,7 +284,6 @@ var AudioSource = cc.Class({
      * @method resume
      */
     resume: function () {
-        this._ensureDataLoaded();
         this.audio.resume();
     },
 

@@ -165,13 +165,43 @@ if (CC_DEBUG) {
     }
     // remove cc.info
     js.get(cc, 'info', function () {
-        cc.warnID(1400, 'cc.info', 'cc.log');
+        cc.errorID(1400, 'cc.info', 'cc.log');
         return cc.log;
     });
     // cc.spriteFrameCache
     js.get(cc, "spriteFrameCache", function () {
         cc.errorID(1404);
     });
+
+    // cc.vmath
+    js.get(cc, 'vmath', function () {
+        cc.warnID(1400, 'cc.vmath', 'cc.math');
+        return cc.math;
+    });
+    js.get(cc.math, 'vec2', function () {
+        cc.warnID(1400, 'cc.vmath.vec2', 'cc.Vec2');
+        return cc.Vec2;
+    })
+    js.get(cc.math, 'vec3', function () {
+        cc.warnID(1400, 'cc.vmath.vec3', 'cc.Vec3');
+        return cc.Vec3;
+    })
+    js.get(cc.math, 'vec4', function () {
+        cc.warnID(1400, 'cc.vmath.vec4', 'cc.Vec4');
+        return cc.Vec4;
+    })
+    js.get(cc.math, 'mat4', function () {
+        cc.warnID(1400, 'cc.vmath.mat4', 'cc.Mat4');
+        return cc.Mat4;
+    })
+    js.get(cc.math, 'mat3', function () {
+        cc.warnID(1400, 'cc.vmath.mat3', 'cc.Mat3');
+        return cc.Mat3;
+    })
+    js.get(cc.math, 'quat', function () {
+        cc.warnID(1400, 'cc.vmath.quat', 'cc.Quat');
+        return cc.Quat;
+    })
 
     // SpriteFrame
     js.get(cc.SpriteFrame.prototype, '_textureLoaded', function () {
@@ -181,6 +211,15 @@ if (CC_DEBUG) {
     markAsRemoved(cc.SpriteFrame, [
         'addLoadedEventListener'
     ]);
+    markFunctionWarning(cc.Sprite.prototype, {
+        setState: 'cc.Sprite.setMaterial',
+        getState: 'cc.Sprite.getMaterial'
+    }, 'cc.Sprite');
+
+    js.get(cc.SpriteFrame.prototype, 'clearTexture', function () {
+        cc.errorID(1406, 'cc.SpriteFrame', 'clearTexture');
+        return function () {};
+    });
 
     // cc.textureCache
     js.get(cc, 'textureCache', function () {
@@ -189,10 +228,13 @@ if (CC_DEBUG) {
 
     // Texture
     let Texture2D = cc.Texture2D;
-    js.obsolete(Texture2D.prototype, 'texture.releaseTexture', 'texture.destroy');
+    js.get(Texture2D.prototype, 'releaseTexture', function () {
+        cc.errorID(1400, 'texture.releaseTexture()', 'texture.destroy()');
+        return this.destroy;
+    });
 
     js.get(Texture2D.prototype, 'getName', function () {
-        cc.warnID(1400, 'texture.getName()', 'texture._glID');
+        cc.errorID(1400, 'texture.getName()', 'texture._glID');
         return function () {
             return this._glID || null;
         };
@@ -206,14 +248,14 @@ if (CC_DEBUG) {
     });
 
     js.get(Texture2D.prototype, 'setAntiAliasTexParameters', function () {
-        cc.warnID(1400, 'texture.setAntiAliasTexParameters()', 'texture.setFilters(cc.Texture2D.Filter.LINEAR, cc.Texture2D.Filter.LINEAR)');
+        cc.errorID(1400, 'texture.setAntiAliasTexParameters()', 'texture.setFilters(cc.Texture2D.Filter.LINEAR, cc.Texture2D.Filter.LINEAR)');
         return function () {
             this.setFilters(Texture2D.Filter.LINEAR, Texture2D.Filter.LINEAR);
         };
     });
 
     js.get(Texture2D.prototype, 'setAliasTexParameters', function () {
-        cc.warnID(1400, 'texture.setAntiAliasTexParameters()', 'texture.setFilters(cc.Texture2D.Filter.NEAREST, cc.Texture2D.Filter.NEAREST)');
+        cc.errorID(1400, 'texture.setAntiAliasTexParameters()', 'texture.setFilters(cc.Texture2D.Filter.NEAREST, cc.Texture2D.Filter.NEAREST)');
         return function () {
             this.setFilters(Texture2D.Filter.NEAREST, Texture2D.Filter.NEAREST);
         };
@@ -227,7 +269,7 @@ if (CC_DEBUG) {
 
     provideClearError(cc.macro, {
         PI: 'Math.PI',
-        PI2: 'Math.PI*2',
+        PI2: 'Math.PI * 2',
         FLT_MAX: 'Number.MAX_VALUE',
         FLT_MIN: 'Number.MIN_VALUE',
         UINT_MAX: 'Number.MAX_SAFE_INTEGER'
@@ -242,6 +284,12 @@ if (CC_DEBUG) {
     markAsRemovedInObject(cc.sys, [
         'dumpRoot',
         'cleanScript',
+        'BROWSER_TYPE_WECHAT_GAME',
+        'BROWSER_TYPE_WECHAT_GAME_SUB',
+        'BROWSER_TYPE_BAIDU_GAME',
+        'BROWSER_TYPE_BAIDU_GAME_SUB',
+        'BROWSER_TYPE_XIAOMI_GAME',
+        'BROWSER_TYPE_ALIPAY_GAME',
     ], 'cc.sys');
 
     // cc.Director
@@ -257,7 +305,7 @@ if (CC_DEBUG) {
         getWinSizeInPixels: 'cc.winSize',
         getVisibleSize: 'cc.view.getVisibleSize',
         getVisibleOrigin: 'cc.view.getVisibleOrigin',
-        purgeCachedData: 'cc.loader.releaseAll',
+        purgeCachedData: 'cc.assetManager.releaseAll',
         setDepthTest: 'cc.Camera.main.depth',
         setClearColor: 'cc.Camera.main.backgroundColor',
         getRunningScene: 'cc.director.getScene',
@@ -265,6 +313,8 @@ if (CC_DEBUG) {
         setAnimationInterval: 'cc.game.setFrameRate',
         isDisplayStats: 'cc.debug.isDisplayStats',
         setDisplayStats: 'cc.debug.setDisplayStats',
+        stopAnimation: 'cc.game.pause',
+        startAnimation: 'cc.game.resume',
     }, 'cc.Director');
     markAsRemoved(cc.Director, [
         'pushScene',
@@ -303,12 +353,6 @@ if (CC_DEBUG) {
         'setViewName',
         'getViewName'
     ], 'cc.view');
-
-    // Loader
-    markAsRemoved(cc.Pipeline, [
-        'flowInDeps',
-        'getItems'
-    ], 'cc.loader');
 
     // cc.PhysicsManager
     markAsRemoved(cc.PhysicsManager, [
@@ -350,12 +394,6 @@ if (CC_DEBUG) {
         '_sgNode',
     ]);
 
-    markAsDeprecated(cc.Node, [
-        ['rotationX', 'eulerAngles'],
-        ['rotationY', 'eulerAngles'],
-        ['rotation', 'angle'],
-    ]);
-
     markFunctionWarning(cc.Node.prototype, {
         getNodeToParentTransform: 'getLocalMatrix',
         getNodeToParentTransformAR: 'getLocalMatrix',
@@ -363,8 +401,10 @@ if (CC_DEBUG) {
         getNodeToWorldTransformAR: 'getWorldMatrix',
         getParentToNodeTransform: 'getLocalMatrix',
         getWorldToNodeTransform: 'getWorldMatrix',
-        convertTouchToNodeSpace: 'convertToNodeSpace',
+        convertTouchToNodeSpace: 'convertToNodeSpaceAR',
         convertTouchToNodeSpaceAR: 'convertToNodeSpaceAR',
+        convertToWorldSpace: 'convertToWorldSpaceAR',
+        convertToNodeSpace: 'convertToNodeSpaceAR'
     });
 
     provideClearError(cc.Node.prototype, {
@@ -392,11 +432,6 @@ if (CC_DEBUG) {
         setLocalZOrder: 'zIndex',
     });
 
-    // cc.Component
-    markAsRemoved(cc.Component, [
-        'isRunning',
-    ]);
-
     provideClearError(cc.Sprite.prototype, {
         setInsetLeft: 'cc.SpriteFrame insetLeft',
         setInsetRight: 'cc.SpriteFrame insetRight',
@@ -404,9 +439,30 @@ if (CC_DEBUG) {
         setInsetBottom: 'cc.SpriteFrame insetBottom',
     });
 
+    // cc.Material
+    cc.Material.getInstantiatedBuiltinMaterial = cc.MaterialVariant.createWithBuiltin;
+    cc.Material.getInstantiatedMaterial = cc.MaterialVariant.create;
+    markFunctionWarning(cc.Material, {
+        getInstantiatedBuiltinMaterial: 'cc.MaterialVariant.createWithBuiltin',
+        getInstantiatedMaterial: 'cc.MaterialVariant.create'
+    });
+
+    // cc.RenderComponent
+    cc.js.getset(cc.RenderComponent.prototype, 'sharedMaterials', function () {
+        cc.warnID(1400, 'sharedMaterials', 'getMaterials');
+        return this.materials;
+    }, function (v) {
+        cc.warnID(1400, 'sharedMaterials', 'setMaterial');
+        this.materials = v;
+    })
+
     // cc.Camera
     markFunctionWarning(cc.Camera.prototype, {
-        getNodeToCameraTransform: 'getWorldToCameraMatrix'
+        getNodeToCameraTransform: 'getWorldToScreenMatrix2D',
+        getCameraToWorldPoint: 'getScreenToWorldPoint',
+        getWorldToCameraPoint: 'getWorldToScreenPoint',
+        getCameraToWorldMatrix: 'getScreenToWorldMatrix2D',
+        getWorldToCameraMatrix: 'getWorldToScreenMatrix2D'
     });
 
     markAsRemoved(cc.Camera, [
@@ -450,6 +506,18 @@ if (CC_DEBUG) {
             }
         },
     });
+
+    // cc.dynamicAtlasManager
+    markAsRemovedInObject(cc.dynamicAtlasManager, [
+        'minFrameSize'
+    ], 'cc.dynamicAtlasManager')
+
+    // light component
+    if (cc.Light) {
+        markAsRemovedInObject(cc.Light.prototype, [
+            'shadowDepthScale',
+        ], 'cc.Light.prototype');
+    }
 
     // Value types
     provideClearError(cc, {
@@ -526,7 +594,7 @@ if (CC_DEBUG) {
         pAngle: 'v1.angle(v2)',
         pAngleSigned: 'v1.signAngle(v2)',
         pRotateByAngle: 'p.rotate(radians)',
-        pCompMult: 'v1.dot(v2)',
+        pCompMult: 'v1.multiply(v2)',
         pFuzzyEqual: 'v1.fuzzyEquals(v2, tolerance)',
         pLerp: 'p.lerp(endPoint, ratio)',
         pClamp: 'p.clampf(min_inclusive, max_inclusive)',
@@ -541,7 +609,6 @@ if (CC_DEBUG) {
         _getError: 'cc.debug.getError',
         _initDebugSetting: 'cc.debug._resetDebugSetting',
         DebugMode: 'cc.debug.DebugMode',
-        BlendFunc: 'cc.macro.BlendFactor',
     }, 'cc');
     markAsRemovedInObject(cc, [
         'blendFuncDisable',
@@ -572,45 +639,46 @@ if (CC_DEBUG) {
         rgb2hsv: 'color.toHSV()',
         hsv2rgb: 'color.fromHSV(h, s, v)'
     });
+    markFunctionWarning(cc.Color, {
+        fromHex: 'cc.Color.fromHEX',
+    })
 
     // macro functions
     js.get(cc, 'lerp', function () {
-        cc.warnID(1400, 'cc.lerp', 'cc.misc.lerp');
+        cc.errorID(1400, 'cc.lerp', 'cc.misc.lerp');
         return cc.misc.lerp;
     });
     js.get(cc, 'random0To1', function () {
-        cc.warnID(1400, 'cc.random0To1', 'Math.random');
+        cc.errorID(1400, 'cc.random0To1', 'Math.random');
         return Math.random;
     });
     js.get(cc, 'degreesToRadians', function () {
-        cc.warnID(1400, 'cc.degreesToRadians', 'cc.misc.degreesToRadians');
+        cc.errorID(1400, 'cc.degreesToRadians', 'cc.misc.degreesToRadians');
         return cc.misc.degreesToRadians;
     });
     js.get(cc, 'radiansToDegrees', function () {
-        cc.warnID(1400, 'cc.radiansToDegrees', 'cc.misc.radiansToDegrees');
+        cc.errorID(1400, 'cc.radiansToDegrees', 'cc.misc.radiansToDegrees');
         return cc.misc.radiansToDegrees;
     });
     js.get(cc, 'clampf', function () {
-        cc.warnID(1400, 'cc.clampf', 'cc.misc.clampf');
+        cc.errorID(1400, 'cc.clampf', 'cc.misc.clampf');
         return cc.misc.clampf;
     });
     js.get(cc, 'clamp01', function () {
-        cc.warnID(1400, 'cc.clamp01', 'cc.misc.clamp01');
+        cc.errorID(1400, 'cc.clamp01', 'cc.misc.clamp01');
         return cc.misc.clamp01;
     });
     js.get(cc, 'ImageFormat', function () {
-        cc.warnID(1400, 'cc.ImageFormat', 'cc.macro.ImageFormat');
+        cc.errorID(1400, 'cc.ImageFormat', 'cc.macro.ImageFormat');
         return cc.macro.ImageFormat;
     });
     js.get(cc, 'KEY', function () {
-        cc.warnID(1400, 'cc.KEY', 'cc.macro.KEY');
+        cc.errorID(1400, 'cc.KEY', 'cc.macro.KEY');
         return cc.macro.KEY;
     });
-
-    // cc.pool
-    js.get(cc, 'pool', function () {
-        cc.errorID(1407);
-        return js.Pool;
+    js.get(cc, 'Easing', function () {
+        cc.errorID(1400, 'cc.Easing', 'cc.easing');
+        return cc.easing;
     });
 
     // cc.isChildClassOf
@@ -621,6 +689,32 @@ if (CC_DEBUG) {
 
     // dragon bones
     if (typeof dragonBones !== 'undefined') {
-        js.obsolete(dragonBones.CCFactory, 'dragonBones.CCFactory.getFactory', 'getInstance');
+        js.get(dragonBones.CCFactory, 'getFactory', function () {
+            cc.errorID(1400, 'dragonBones.CCFactory.getFactory', 'dragonBones.CCFactory.getInstance');
+            return dragonBones.CCFactory.getInstance;
+        });
     }
+
+    // renderEngine
+    cc.renderer.renderEngine = {
+        get gfx () {
+            cc.warnID(1400, 'cc.renderer.renderEngine.gfx', 'cc.gfx');
+            return cc.gfx;
+        },
+        get math () {
+            cc.warnID(1400, 'cc.renderer.renderEngine.math', 'cc.math');
+            return cc.vmath;
+        },
+        get InputAssembler () {
+            cc.warnID(1400, 'cc.renderer.renderEngine.InputAssembler', 'cc.renderer.InputAssembler');
+            return cc.renderer.InputAssembler;
+        }
+    };
+    
+    // audio
+    markAsRemovedInObject(cc.audioEngine, [
+        'getProfile',
+        'preload',
+        'setMaxWebAudioSize',
+    ], 'cc.audioEngine');
 }

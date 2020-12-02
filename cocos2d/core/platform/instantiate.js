@@ -29,6 +29,7 @@ var CCValueType = require('../value-types/value-type');
 var Destroyed = CCObject.Flags.Destroyed;
 var PersistentMask = CCObject.Flags.PersistentMask;
 var _isDomNode = require('./utils').isDomNode;
+var js = require('./js');
 
 /**
  * !#en Clones the object `original` and returns the clone, or instantiate a node from the Prefab.
@@ -87,7 +88,7 @@ function instantiate (original, internal_force) {
         // @returns {Object} - the instantiated object
         if (original._instantiate) {
             cc.game._isCloning = true;
-            clone = original._instantiate();
+            clone = original._instantiate(null, true);
             cc.game._isCloning = false;
             return clone;
         }
@@ -183,7 +184,7 @@ function enumerateCCClass (klass, obj, clone, parent) {
 function enumerateObject (obj, clone, parent) {
     // 目前使用“_iN$t”这个特殊字段来存实例化后的对象，这样做主要是为了防止循环引用
     // 注意，为了避免循环引用，所有新创建的实例，必须在赋值前被设为源对象的_iN$t
-    obj._iN$t = clone;
+    js.value(obj, '_iN$t', clone, true);
     objsToClearTmpVar.push(obj);
     var klass = obj.constructor;
     if (cc.Class._isCCClass(klass)) {
@@ -228,11 +229,22 @@ function instantiateObj (obj, parent) {
         return obj;
     }
     var clone;
-    if (Array.isArray(obj)) {
-        var len = obj.length;
-        clone = new Array(len);
+    if (ArrayBuffer.isView(obj)) {
+        let len = obj.length;
+        clone = new (obj.constructor)(len);
         obj._iN$t = clone;
-        for (var i = 0; i < len; ++i) {
+        objsToClearTmpVar.push(obj);
+        for (let i = 0; i < len; ++i) {
+            clone[i] = obj[i];
+        }
+        return clone;
+    }
+    if (Array.isArray(obj)) {
+        let len = obj.length;
+        clone = new Array(len);
+        js.value(obj, '_iN$t', clone, true);
+        objsToClearTmpVar.push(obj);
+        for (let i = 0; i < len; ++i) {
             var value = obj[i];
             if (typeof value === 'object' && value) {
                 clone[i] = value._iN$t || instantiateObj(value, parent);
@@ -241,7 +253,6 @@ function instantiateObj (obj, parent) {
                 clone[i] = value;
             }
         }
-        objsToClearTmpVar.push(obj);
         return clone;
     }
     else if (obj._objFlags & Destroyed) {

@@ -40,7 +40,7 @@ var _global = typeof window === 'undefined' ? global : window;
 _global.cc = _global.cc || {};
 
 // For internal usage
-_global._cc = _global._cc || {};
+cc.internal = cc.internal || {};
 
 require('./predefine');
 
@@ -49,6 +49,8 @@ require('./polyfill/string');
 require('./polyfill/misc');
 require('./polyfill/array');
 require('./polyfill/object');
+require('./polyfill/array-buffer');
+require('./polyfill/number');
 if (!(CC_EDITOR && Editor.isMainProcess)) {
     require('./polyfill/typescript');
 }

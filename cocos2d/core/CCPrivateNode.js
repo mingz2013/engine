@@ -27,13 +27,10 @@
 
 const Node = require('./CCNode');
 const RenderFlow = require('./renderer/render-flow');
-const math = require('./renderer/render-engine').math;
 
 const HideInHierarchy = cc.Object.Flags.HideInHierarchy;
 const LocalDirtyFlag = Node._LocalDirtyFlag;
 const POSITION_ON = 1 << 0;
-
-let _vec3_temp = math.vec3.create();
 
 /**
  * !#en
@@ -95,7 +92,6 @@ let PrivateNode = cc.Class({
                 return cc.macro.MIN_ZINDEX;
             },
             set () {
-                cc.warnID(1638);
             },
             override: true
         },
@@ -120,7 +116,7 @@ let PrivateNode = cc.Class({
 
     _posDirty (sendEvent) {
         this.setLocalDirty(LocalDirtyFlag.POSITION);
-        this._renderFlag |= RenderFlow.FLAG_TRANSFORM;
+        !CC_NATIVERENDERER && (this._renderFlag |= RenderFlow.FLAG_TRANSFORM);
         if (sendEvent === true && (this._eventMask & POSITION_ON)) {
             this.emit(Node.EventType.POSITION_CHANGED);
         }
@@ -132,8 +128,8 @@ let PrivateNode = cc.Class({
         let parent = this.parent;
         if (parent) {
             // Position correction for transform calculation
-            this._position.x = this._originPos.x - (parent._anchorPoint.x - 0.5) * parent._contentSize.width;
-            this._position.y = this._originPos.y - (parent._anchorPoint.y - 0.5) * parent._contentSize.height;
+            this._trs[0] = this._originPos.x - (parent._anchorPoint.x - 0.5) * parent._contentSize.width;
+            this._trs[1] = this._originPos.y - (parent._anchorPoint.y - 0.5) * parent._contentSize.height;
         }
 
         this._super();
@@ -175,7 +171,19 @@ let PrivateNode = cc.Class({
     _updateOrderOfArrival() {},
 });
 
-cc.js.getset(PrivateNode.prototype, "parent", PrivateNode.prototype.getParent, PrivateNode.prototype.setParent);
-cc.js.getset(PrivateNode.prototype, "position", PrivateNode.prototype.getPosition, PrivateNode.prototype.setPosition);
+let proto = PrivateNode.prototype;
+cc.js.getset(proto, "parent", proto.getParent, proto.setParent);
+cc.js.getset(proto, "position", proto.getPosition, proto.setPosition);
+
+if (CC_EDITOR) {
+    // check components to avoid missing node reference serialied in previous version
+    proto._onBatchCreated = function (dontSyncChildPrefab) {
+        for (let comp of this._components) {
+            comp.node = this;
+        }
+
+        Node.prototype._onBatchCreated.call(this, dontSyncChildPrefab);
+    };
+}
 
 cc.PrivateNode = module.exports = PrivateNode;

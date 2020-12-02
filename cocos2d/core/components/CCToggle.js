@@ -24,16 +24,20 @@
  THE SOFTWARE.
  ****************************************************************************/
 
+const GraySpriteState = require('../utils/gray-sprite-state');
+
 /**
  * !#en The toggle component is a CheckBox, when it used together with a ToggleGroup, it
  * could be treated as a RadioButton.
  * !#zh Toggle 是一个 CheckBox，当它和 ToggleGroup 一起使用的时候，可以变成 RadioButton。
  * @class Toggle
  * @extends Button
+ * @uses GraySpriteState
  */
 let Toggle = cc.Class({
     name: 'cc.Toggle',
     extends: require('./CCButton'),
+    mixins: [GraySpriteState],
     editor: CC_EDITOR && {
         menu: 'i18n:MAIN_MENU.component.ui/Toggle',
         help: 'i18n:COMPONENT.help_url.toggle',
@@ -72,7 +76,9 @@ let Toggle = cc.Class({
                     group.updateToggles(this);
                 }
 
-                this._emitToggleEvents();
+                if (cc.Toggle._triggerEventInScript_isChecked) {
+                    this._emitToggleEvents();
+                }
             },
             tooltip: CC_DEV && 'i18n:COMPONENT.toggle.isChecked',
         },
@@ -122,12 +128,17 @@ let Toggle = cc.Class({
 
     },
 
+    statics: {
+        _triggerEventInScript_check: false,
+        _triggerEventInScript_isChecked: false,
+    },
+
     onEnable: function () {
         this._super();
         if (!CC_EDITOR) {
             this._registerToggleEvent();
         }
-        if (this.toggleGroup && this.toggleGroup.enabled) {
+        if (this.toggleGroup && this.toggleGroup.enabledInHierarchy) {
             this.toggleGroup.addToggle(this);
         }
     },
@@ -137,7 +148,7 @@ let Toggle = cc.Class({
         if (!CC_EDITOR) {
             this._unregisterToggleEvent();
         }
-        if (this.toggleGroup && this.toggleGroup.enabled) {
+        if (this.toggleGroup && this.toggleGroup.enabledInHierarchy) {
             this.toggleGroup.removeToggle(this);
         }
     },
@@ -149,6 +160,9 @@ let Toggle = cc.Class({
 
     toggle: function (event) {
         this.isChecked = !this.isChecked;
+        if (!cc.Toggle._triggerEventInScript_isChecked && (cc.Toggle._triggerEventInScript_check || event)) {
+            this._emitToggleEvents();
+        }
     },
 
     /**
@@ -158,6 +172,9 @@ let Toggle = cc.Class({
      */
     check: function () {
         this.isChecked = true;
+        if (!cc.Toggle._triggerEventInScript_isChecked && cc.Toggle._triggerEventInScript_check) {
+            this._emitToggleEvents();
+        }
     },
 
     /**
@@ -167,6 +184,9 @@ let Toggle = cc.Class({
      */
     uncheck: function () {
         this.isChecked = false;
+        if (!cc.Toggle._triggerEventInScript_isChecked && cc.Toggle._triggerEventInScript_check) {
+            this._emitToggleEvents();
+        }
     },
 
     _updateCheckMark: function () {
@@ -178,13 +198,9 @@ let Toggle = cc.Class({
     _updateDisabledState: function () {
         this._super();
 
-        if (this.checkMark) {
-            this.checkMark.setState(0);
-        }
-        if (this.enableAutoGrayEffect) {
-            if (this.checkMark && !this.interactable) {
-                this.checkMark.setState(1);
-            }
+        if (this.enableAutoGrayEffect && this.checkMark) {
+            let useGrayMaterial = !this.interactable;
+            this._switchGrayMaterial(useGrayMaterial, this.checkMark);
         }
     },
 

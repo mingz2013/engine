@@ -3,11 +3,12 @@
 const Path = require('path');
 const resolve = require('rollup-plugin-node-resolve');
 const rollup = require('rollup');
+const typescript = require('rollup-plugin-typescript');
 
-let src = Path.join(__dirname, '../mappings/offline-mappings.js');
-let dest = '../mappings';
+let src = Path.join(__dirname, './mappings/offline-mappings.ts');
+let dest = Path.join(__dirname, './mappings');
 let name = 'index';
-let sourcemap = true;
+let sourcemap = false;
 let globals = {};
 
 console.log('rollup mappings...');
@@ -16,6 +17,7 @@ console.log('rollup mappings...');
 const inputOptions = {
   input: src,
   plugins: [
+    typescript({lib: ["es5", "es6", "dom"], target: "es5"}),
     resolve({
       jsnext: false,
       main: false,
@@ -24,7 +26,7 @@ const inputOptions = {
   ],
 };
 const outputOptions = {
-  file: `${dest}/${name}.js`,
+  file: Path.join(dest, name+'.js'),
   format: 'cjs',
   name,
   globals,
@@ -33,7 +35,15 @@ const outputOptions = {
 
 async function build() {
   // create a bundle
-  const bundle = await rollup.rollup(inputOptions);
+  let bundle;
+
+  try {
+    bundle = await rollup.rollup(inputOptions);
+  }
+  catch (err) {
+    console.error(err);
+    return;
+  }
 
   // console.log(bundle.imports); // an array of external dependencies
   // console.log(bundle.exports); // an array of names exported by the entry point

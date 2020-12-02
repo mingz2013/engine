@@ -281,9 +281,6 @@ var Layout = cc.Class({
             animatable: false
         },
 
-        _N$padding: {
-            default: 0
-        },
         /**
          * !#en The left padding of layout, it only effect the layout in one direction.
          * !#zh 容器内左边距，只会在一个布局方向上生效。
@@ -422,23 +419,11 @@ var Layout = cc.Class({
         AxisDirection: AxisDirection,
     },
 
-    _migratePaddingData: function () {
-        this.paddingLeft = this._N$padding;
-        this.paddingRight = this._N$padding;
-        this.paddingTop = this._N$padding;
-        this.paddingBottom = this._N$padding;
-        this._N$padding = 0;
-    },
-
     onEnable: function () {
         this._addEventListeners();
 
         if (this.node.getContentSize().equals(cc.size(0, 0))) {
             this.node.setContentSize(this._layoutSize);
-        }
-
-        if (this._N$padding !== 0) {
-            this._migratePaddingData();
         }
 
         this._doLayoutDirty();
@@ -817,22 +802,25 @@ var Layout = cc.Class({
         }
 
         if (allChildrenBoundingBox) {
-            var leftBottomInParentSpace = this.node.parent.convertToNodeSpaceAR(cc.v2(allChildrenBoundingBox.x, allChildrenBoundingBox.y));
-            leftBottomInParentSpace = cc.v2(leftBottomInParentSpace.x - this.paddingLeft, leftBottomInParentSpace.y - this.paddingBottom);
+            var leftBottomSpace = this.node.convertToNodeSpaceAR(cc.v2(allChildrenBoundingBox.x, allChildrenBoundingBox.y));
+            leftBottomSpace = cc.v2(leftBottomSpace.x - this.paddingLeft, leftBottomSpace.y - this.paddingBottom);
 
-            var rightTopInParentSpace = this.node.parent.convertToNodeSpaceAR(cc.v2(allChildrenBoundingBox.x + allChildrenBoundingBox.width,
-                                                                                   allChildrenBoundingBox.y + allChildrenBoundingBox.height));
-            rightTopInParentSpace = cc.v2(rightTopInParentSpace.x + this.paddingRight, rightTopInParentSpace.y + this.paddingTop);
+            var rightTopSpace = this.node.convertToNodeSpaceAR(cc.v2(allChildrenBoundingBox.xMax, allChildrenBoundingBox.yMax));
+            rightTopSpace = cc.v2(rightTopSpace.x + this.paddingRight, rightTopSpace.y + this.paddingTop);
 
-            var newSize = cc.size(parseFloat((rightTopInParentSpace.x - leftBottomInParentSpace.x).toFixed(2)),
-                                  parseFloat((rightTopInParentSpace.y - leftBottomInParentSpace.y).toFixed(2)));
+            var newSize = rightTopSpace.sub(leftBottomSpace);
+            newSize = cc.size(parseFloat(newSize.x.toFixed(2)), parseFloat(newSize.y.toFixed(2)));
 
-            var layoutPosition = this.node.getPosition();
-            var newAnchorX = (layoutPosition.x - leftBottomInParentSpace.x) / newSize.width;
-            var newAnchorY = (layoutPosition.y - leftBottomInParentSpace.y) / newSize.height;
-            var newAnchor = cc.v2(parseFloat(newAnchorX.toFixed(2)), parseFloat(newAnchorY.toFixed(2)));
-
-            this.node.setAnchorPoint(newAnchor);
+            if (newSize.width !== 0) {
+                // Invert is to get the coordinate point of the child node in the parent coordinate system
+                var newAnchorX = (-leftBottomSpace.x) / newSize.width;
+                this.node.anchorX = parseFloat(newAnchorX.toFixed(2));
+            }
+            if (newSize.height !== 0) {
+                // Invert is to get the coordinate point of the child node in the parent coordinate system
+                var newAnchorY = (-leftBottomSpace.y) / newSize.height;
+                this.node.anchorY = parseFloat(newAnchorY.toFixed(2));
+            }
             this.node.setContentSize(newSize);
         }
     },
@@ -1006,24 +994,6 @@ var Layout = cc.Class({
             this._doLayout();
             this._layoutDirty = false;
         }
-    }
-});
-
-/**
- * !#en The padding of layout, it effects the layout in four direction.
- * !#zh 容器内边距，该属性会在四个布局方向上生效。
- * @property {Number} padding
- */
-Object.defineProperty(Layout.prototype, "padding", {
-    get: function () {
-        cc.warnID(4100);
-        return this.paddingLeft;
-    },
-    set: function (value) {
-        this._N$padding = value;
-
-        this._migratePaddingData();
-        this._doLayoutDirty();
     }
 });
 

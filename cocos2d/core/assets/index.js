@@ -24,7 +24,6 @@
  THE SOFTWARE.
  ****************************************************************************/
 
-require('./CCRawAsset');
 require('./CCAsset');
 require('./CCFont');
 require('./CCPrefab');
@@ -41,5 +40,4 @@ require('./CCLabelAtlas');
 require('./CCTextAsset');
 require('./CCJsonAsset');
 require('./CCBufferAsset');
-require('./CCEffectAsset');
-require('./CCMaterial');
+require('./material');

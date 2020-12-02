@@ -26,7 +26,8 @@ module.exports = {
             "toggleContainer": "https://docs.cocos.com/creator/manual/en/components/toggleContainer.html",
             "slider": "https://docs.cocos.com/creator/manual/en/components/slider.html",
             "block_input_events": "https://docs.cocos.com/creator/manual/en/components/block-input-events.html",
-            "wx_subcontext_view": "https://docs.cocos.com/creator/manual/en/publish/publish-wechatgame-sub-domain.html"
+            "subcontext_view": "https://docs.cocos.com/creator/manual/en/publish/publish-wechatgame-sub-domain.html",
+            "safe_area": "https://docs.cocos.com/creator/manual/en/components/safearea.html"
         },
         "animation": {
             "default_clip": "When checking, the deault animation clip is automatically played.",
@@ -44,19 +45,19 @@ module.exports = {
             "sprite_frame": "SpriteFrame image to use",
             "atlas": "Atlas that the image belongs to",
             "type": "Rendering Mode: Simple, Sliced, Tiled or Filled",
-            "original_size": "Use the Images original size as the Node size?",
+            "original_size": "Use the Image's original size as the Node size?",
             "edit_button": "Edit",
             "select_button": "Select In Atlas",
             "select_tooltip": "Choose Atlas",
             "edit_tooltip": "Open Sprite Editor, set squares and other data",
             'fill_type': 'The direction of filling, choose from Horizontal, Vertical and Radial',
             'fill_center': 'For radial filling, set the center of the circle, value range is 0 to 1',
-            'fill_start': 'The normalized value indicate where to start filling',
-            'fill_range': 'The normalizad value indicate how much of the sprite we want to show',
+            'fill_start': 'The normalized value indicates where to start filling',
+            'fill_range': 'The normalizad value indicates how much of the sprite we want to show',
             'src_blend_factor': 'The source image blend mode',
             'dst_blend_factor': 'The destination image blend mode',
-            'size_mode': 'Set the size of the node which Sprite component is on. CUSTOM for setting width and height manually;TRIMMED to use image size with transparent pixels trimmed; RAW to use image size without trimming.',
-            'trim': 'Whether to render transparent pixels around image in node\'s bounding box. If you check this option the boudning box will not include transparent pixels around the image.'
+            'size_mode': 'Set the size of the node on which the Sprite component is on. CUSTOM for setting width and height manually;TRIMMED to use image size with transparent pixels trimmed; RAW to use image size without trimming.',
+            'trim': 'Whether to render transparent pixels around image in node\'s bounding box. If you check this option the bounding box will not include transparent pixels around the image.'
         },
         "button": {
             "click_event": {
@@ -72,12 +73,14 @@ module.exports = {
             "hover_color": "Button color when the mouse hovers over it",
             "disabled_color": "Button color when disabled",
             "duration": "How long until the button color/scale transitions to a new color?",
-            "zoom_scale": "When user press the button, the button will zoom to a scale.The final scale of the button  equals (button original scale * zoomScale), zoomScale could be negative value.",
+            "zoom_scale": "When user press the button, the button will zoom to a scale.The final scale of the button  equals (button original scale * zoomScale).",
             "auto_gray_effect": "When this flag is true, Button target sprite will turn gray when interactable is false.",
             "normal_sprite": "The Sprite that is used when the button is in a normal sate.",
             "pressed_sprite": "The Sprite that is used when the button is in a pressed sate.",
             "hover_sprite": "The Sprite that is used when the button is hovered over.",
             "disabled_sprite": "The Sprite that is used when the button is in a disabled sate.",
+            'normal_material': 'The material used for the background image specified by the button under normal conditions',
+            'gray_material': 'The material used for the background image specified by the button in the disabled state',
             "target": "reference to the Sprite as button's background. When the state of the button changes the sprite's color or spriteFrame will be updated.",
             "click_events": "What method is called on the click event?"
         },
@@ -85,6 +88,21 @@ module.exports = {
             "design_resolution": "The resolution of the assets used in the game, in pixels.",
             "fit_height": "Canvas allows designers to automatically scale the resolution  to the full height of devices screen",
             "fit_width": "Canvas allows designers to automatically scale the resolution  to the full width of devices screen"
+        },
+        "camera": {
+            'zoomRatio': 'The camera zoom ratio.',
+            'fov': 'Field of view. The width of the Camera’s view angle, measured in degrees along the local Y axis.',
+            'orthoSize': 'The viewport size of the Camera when set to orthographic projection.',
+            'nearClip': 'The near clipping plane.',
+            'farClip': 'The far clipping plane.',
+            'ortho': 'Is the camera orthographic (true) or perspective (false)?',
+            'rect': 'Four values (0 ~ 1) that indicate where on the screen this camera view will be drawn.',
+            'cullingMask': 'This is used to render parts of the scene selectively.',
+            'clearFlags': 'Determining what to clear when camera rendering. \n - Color：Clear the background color. \n - Depth：Clear the depth buffer. \n - STENCIL：Clear the stencil.',
+            'backgroundColor': 'The color with which the screen will be cleared.',
+            'depth': 'Camera\'s depth in the camera rendering order.',
+            'targetTexture': 'Destination render texture. \n Usually cameras render directly to screen, but for some effects it is useful to make a camera render into a texture.',
+            'renderStages': 'Sets the camera\'s render stages.',
         },
         "label": {
             "string": "Text of the Label",
@@ -95,8 +113,24 @@ module.exports = {
             "line_height": "Line height, in points",
             "overflow": "Text layout modes: \n 1. CLAMP: text nodes outside the bounding box will be truncated \n 2. SHRINK: automatically shrink text box according to the constraint node \n 3. RESIZE: Automatically updates the Node based on heightof the text.",
             "wrap": "Wrap text?",
+            'bold': 'Enable bold',
+            'italic': 'Enable italic',
+            'underline': 'Enable underline',
+            'underline_height': 'Height of underline',
             "font": "What font to use",
-            "system_font": "Whether to use the system default font"
+            "system_font": "Whether to use the system default font",
+            'cacheMode': 'The text cache mode includes the following three types: \n 1. NONE : Do not do any caching, text content is drawn once. \n 2. BITMAP: Add text as a static image to the dynamic atlas for batch merging, but not frequently dynamically Text content \n 3. CHAR: Splits text into characters and caches characters into character atlas, suitable for text content with repeated and frequently updated character content',
+            'actualFontSize': 'The actual rendering font size in shrink mode',
+            'spacingX': 'The spacing of the x axis between characters',
+        },
+        "outline": {
+            "color": "The outline color",
+            "width": "The outline width",
+        },
+        "shadow": {
+            "color": "The shadow color",
+            "offset": "Offset between font and shadow",
+            "blur": "A non-negative float specifying the level of shadow blur"
         },
         "progress": {
             "bar_sprite": "A progress bar is displayed with the Sprite node that can dynamically change the size",
@@ -209,19 +243,15 @@ module.exports = {
         },
         "editbox": {
             "string": "The initial input text of EditBox.",
-            "backgroundImage": "The background image of EditBox.",
+            "background": "The Sprite component attached to the node for EditBox's background.",
             "returnType": "The keyboard return type of EditBox. This is useful for keyboard of mobile device.",
             "input_flag": "Specify the input flag: password or capitalize word. ",
             "input_mode": "Specify the input mode: multiline or single line.",
-            "font_size": "The font size of input label.",
-            "line_height": "The line height of input label.",
-            "stay_on_top": "Set to true and the input is always visible and be on top of the game view",
             "tab_index": "Set the tabIndex of the DOM input element, only useful on Web.",
-            "font_color": "The font color of input label.",
             "placeholder": "The content string of placeholder.",
-            "placeholder_font_size": "The font size of placeholder label.",
-            "placeholder_font_color": "The font color of placeholder label.",
-            "max_length": "The maximize input characters."
+            "max_length": "The maximize input characters.",
+            "textLabel": "The Label component attached to the node for EditBox's input text label.",
+            "placeholderLabel": "The Label component attached to the node for EditBox's placeholder text label."
         },
         "videoplayer": {
             "resourceType": "The resource type of VideoPlayer, currently support remote URL and local videos.",
@@ -232,6 +262,7 @@ module.exports = {
             "currentTime": "The start time when video start to play.",
             "keepAspectRatio": "Whether keep the original video's aspect ratio.",
             "isFullscreen": "Whether keep the video fullscreen when it is playing.",
+            "stayOnBottom": "Always below the game view (only useful on Web. Note: The specific effects are not guaranteed to be consistent, depending on whether each browser supports or restricts)."
         },
         "webview": {
             "url": "A given URL to be loaded by the WebView, it should have a http or https prefix."
@@ -241,6 +272,8 @@ module.exports = {
             "horizontal_align": "Horizontal alignment",
             "font_size": "Font size, in points",
             "font": "Custom TTF font of RichText",
+            "font_family": "Custom System font of RichText",
+            "system_font": "Whether to use the system default font",
             "line_height": "Line height, in points",
             "max_width": "The maximize width of RichText, pass 0 means not limit the maximize width.",
             "image_atlas": "The image atlas for the img tag. For each src value in the img tag, there should be a valid spriteFrame in the image atlas.",
@@ -254,7 +287,11 @@ module.exports = {
             "time_scale": "The time scale of animations of this skeleton",
             "debug_slots": "Indicates whether show debug slots.",
             "debug_bones": "Indicates whether show debug bones.",
+            "debug_mesh": "Indicates whether show debug mesh.",
             "premultipliedAlpha": "Indicates whether to enable premultiplied alpha.",
+            "use_tint": "Indicates whether to use tint effect.",
+            "enabled_batch": "Indicates whether enabled batch model",
+            "animation_cache_mode": "REALTIME model, the animation data is calculated while running, all features supported. SHARED_CACHE mode, the animation data is pre-calculated and cached globally, the data is shared between skeleton animation instances. Shared cache mode has great performance advantage, but it has some limitation. It doesn't support action blending and addition and it only supports the start and end events. In the memory usage aspect, as same skeleton animation instances are sharing the same animation data, this mode can save a lot of memory. More instances are sharing, more memory saved. In conclusion SHARED_CACHE mode is suitable for the skeletons which could be replicated, such as effects animation, monster, NPC and so on.\nPRIVATE_CACHE mode, similar to SHARED_CACHE, but the animation data and texture data are not shared between skeleton instances. So there is no advantage in memory compare to REALTIME mode. The PRIVATE_CACHE is suitable when there is no animation blending or addition needed, but the skeleton could change textures of sub bone (e.g. weapon).",
         },
         "dragon_bones": {
             "dragon_bones_asset": "The json data contains the DragonBones information, drag the json file exported from DragonBones to get started.",
@@ -263,7 +300,9 @@ module.exports = {
             "animation_name": "The name of current playing animation.",
             "time_scale": "The time scale of this armature.",
             "play_times": "The play times of the default animation.\n-1 means using the value of config file\n0 means repeat for ever\n>0 means repeat times",
-            "debug_bones": "Indicates whether open debug bones"
+            "debug_bones": "Indicates whether open debug bones",
+            "enabled_batch": "Indicates whether enabled batch model",
+            "animation_cache_mode": "REALTIME model, the animation data is calculated while running, all features supported. SHARED_CACHE mode, the animation data is pre-calculated and cached globally, the data is shared between skeleton animation instances. Shared cache mode has great performance advantage, but it has some limitation. It doesn't support action blending and addition and it only supports the start and end events. In the memory usage aspect, as same skeleton animation instances are sharing the same animation data, this mode can save a lot of memory. More instances are sharing, more memory saved. In conclusion SHARED_CACHE mode is suitable for the skeletons which could be replicated, such as effects animation, monster, NPC and so on.\nPRIVATE_CACHE mode, similar to SHARED_CACHE, but the animation data and texture data are not shared between skeleton instances. So there is no advantage in memory compare to REALTIME mode. The PRIVATE_CACHE is suitable when there is no animation blending or addition needed, but the skeleton could change textures of sub bone (e.g. weapon).",
         },
         'motionStreak': {
             'fadeTime': "Trail fragment fade time, in seconds",
@@ -281,6 +320,11 @@ module.exports = {
             'editing': 'Edit this collider component',
             'category': 'Collider component category',
             'mask': 'The collider mask can collide with this collider'
+        },
+        'collider3D': {
+            'center': 'The center point of the collider',
+            'size': 'The size of the box, in local space',
+            'radius': 'The radius of the sphere',
         },
         'particle_system': {
             'preview': 'Play particle in edit mode',
@@ -323,7 +367,7 @@ module.exports = {
             'type': 'The mask type',
             'spriteFrame': 'The mask image',
             'inverted': 'The Reverse mask (Not supported Canvas Mode)',
-            'alphaThreshold': 'The alpha threshold，The content is drawn only where the stencil have pixel with alpha greater than the alphaThreshold (Not supported Canvas Mode)',
+            'alphaThreshold': 'The alpha threshold，The content is drawn only where the stencil have pixel with alpha greater than or equal to the alphaThreshold (Not supported Canvas Mode)',
             'segements': 'The segements for ellipse mask'
         },
         'physics': {
@@ -338,7 +382,8 @@ module.exports = {
                 'linearVelocity': 'The linear velocity of the body\'s origin in world co-ordinates',
                 'angularVelocity': 'The angular velocity of the body.',
                 'fixedRotation': 'Should this body be prevented from rotating?',
-                'awake': 'Is this body initially awake or sleeping?'
+                'awake': 'Set the sleep state of the body. A sleeping body has very low CPU cost.(When the rigid body is hit, if the rigid body is in sleep state, it will be immediately awakened.)',
+                'awakeOnLoad': 'Whether to wake up this rigid body during initialization',
             },
             'physics_collider': {
                 'density': 'The density',
@@ -379,7 +424,7 @@ module.exports = {
             }
         },
         'block_input_events': {
-            'brief_help': 'This component will block all input events, preventing the input from penetrating into the underlying node, typically for the background of the top UI.'
+            'brief_help': 'This component will block all input events, preventing the input from penetrating to other nodes below the screen, typically for the background of the top-level UI of the screen.'
         },
         'tiledtile': {
             'row': 'Specify the TiledTile horizontal coordinate，use map tile as the unit.',
@@ -387,8 +432,18 @@ module.exports = {
             'gid': 'Specify the TiledTile gid.',
             'layer': 'Specify which TiledLayer the TiledTile belong to.'
         },
-        'skeleton_animation': {
-            'search_animation_clips': 'Search Animation Clips'
+        'subcontext_view': {
+            'fps': 'The FPS of open data context, this property will overwrite the frame rate setting in open data context',
         },
+        'skeleton_animation': {
+            'search_animation_clips': 'Search Animation Clips',
+        },
+        'attach_util': {
+            "generate_attached_node": "Generate Attached Node"
+        },
+        'safe_area': {
+            'brief_help': 'This component is used to adjust the layout of current node to respect the safe area of a notched mobile device such as the iPhone X.' +
+                          'It is typically used for the top node of the UI interaction area. (It will take effect automatically on mobile device and has no effect in the editor.)'
+        }
     }
 };

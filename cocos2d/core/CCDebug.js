@@ -23,6 +23,7 @@
  THE SOFTWARE.
  ****************************************************************************/
 
+const utils = require('./platform/utils');
 const debugInfos = require('../../DebugInfos') || {};
 const ERROR_MAP_URL = 'https://github.com/cocos-creator/engine/blob/master/EngineErrorMap.md';
 
@@ -33,7 +34,7 @@ let logList;
  * @module cc
  */
 
-cc.log = cc.warn = cc.error = cc.assert = console.log;
+cc.log = cc.warn = cc.error = cc.assert = console.log.bind ? console.log.bind(console) : console.log;
 
 let resetDebugSetting = function (mode) {
     // reset
@@ -129,7 +130,7 @@ let resetDebugSetting = function (mode) {
             cc.error = console.error.bind(console);
         }
         else {
-            cc.error = CC_JSB ? console.error : function () {
+            cc.error = CC_JSB || CC_RUNTIME ? console.error : function () {
                 return console.error.apply(console, arguments);
             };
         }
@@ -172,7 +173,7 @@ let resetDebugSetting = function (mode) {
             cc.warn = console.warn.bind(console);
         }
         else {
-            cc.warn = CC_JSB ? console.warn : function () {
+            cc.warn = CC_JSB || CC_RUNTIME ? console.warn : function () {
                 return console.warn.apply(console, arguments);
             };
         }
@@ -188,7 +189,7 @@ let resetDebugSetting = function (mode) {
          * @param {String|any} msg - A JavaScript string containing zero or more substitution strings.
          * @param {any} ...subst - JavaScript objects with which to replace substitution strings within msg. This gives you additional control over the format of the output.
          */
-        if (CC_JSB) {
+        if (CC_JSB || CC_RUNTIME) {
             if (scriptEngineType === "JavaScriptCore") {
                 // console.log has to use `console` as its context for iOS 8~9. Therefore, apply it.
                 cc.log = function () {
@@ -211,13 +212,9 @@ let resetDebugSetting = function (mode) {
 };
 
 cc._throw = CC_EDITOR ? Editor.error : function (error) {
-    var stack = error.stack;
-    if (stack) {
-        cc.error(CC_JSB ? (error + '\n' + stack) : stack);
-    }
-    else {
-        cc.error(error);
-    }
+    utils.callInNextTick(function () {
+        throw error;
+    });
 };
 
 function getTypedFormatter (type) {
@@ -343,7 +340,7 @@ module.exports = cc.debug = {
      * !#en Gets error message with the error id and possible parameters.
      * !#zh 通过 error id 和必要的参数来获取错误信息。
      * @method getError
-     * @param {id} errorId
+     * @param {Number} errorId
      * @param {any} [param]
      * @return {String}
      */
@@ -366,7 +363,7 @@ module.exports = cc.debug = {
      * @param {Boolean} displayStats
      */
     setDisplayStats: function (displayStats) {
-        if (cc.profiler) {
+        if (cc.profiler && cc.game.renderType !== cc.game.RENDER_TYPE_CANVAS) {
             displayStats ? cc.profiler.showStats() : cc.profiler.hideStats();
             cc.game.config.showFPS = !!displayStats;
         }

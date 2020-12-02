@@ -33,7 +33,8 @@ const tiffReader = require('./CCTIFFReader');
 const textureUtil = require('../core/utils/texture-util');
 const RenderFlow = require('../core/renderer/render-flow');
 const ParticleSimulator = require('./particle-simulator');
-const Material = require('../core/assets/CCMaterial');
+const Material = require('../core/assets/material/CCMaterial');
+const BlendFunc = require('../core/utils/blend-func');
 
 function getImageFormatByData (imgData) {
     // if it is a png file buffer.
@@ -56,6 +57,16 @@ function getImageFormatByData (imgData) {
     }
     return macro.ImageFormat.UNKNOWN;
 }
+
+//
+function getParticleComponents (node) {
+    let parent = node.parent, comp = node.getComponent(cc.ParticleSystem);
+    if (!parent || !comp) {
+        return node.getComponentsInChildren(cc.ParticleSystem);
+    }
+    return getParticleComponents(parent);
+}
+
 
 /**
  * !#en Enum for emitter modes
@@ -94,10 +105,11 @@ var PositionType = cc.Enum({
 
     /**
      * !#en
-     * Living particles are attached to the world but will follow the emitter repositioning.<br/>
-     * Use case: Attach an emitter to an sprite, and you want that the emitter follows the sprite.
+     * In the relative mode, the particle will move with the parent node, but not with the node where the particle is. 
+     * For example, the coffee in the cup is steaming. Then the steam moves (forward) with the train, rather than moves with the cup.
      * !#zh
-     * 相对模式，粒子会随父节点移动而移动，可用于制作移动角色身上的特效等等。（该选项在 Creator 中暂时不支持）
+     * 相对模式，粒子会跟随父节点移动，但不跟随粒子所在节点移动，例如在一列行进火车中，杯中的咖啡飘起雾气，
+     * 杯子移动，雾气整体并不会随着杯子移动，但从火车整体的角度来看，雾气整体会随着火车移动。
      * @property {Number} RELATIVE
      */
     RELATIVE: 1,
@@ -156,12 +168,9 @@ var properties = {
             }
             if (this._custom !== value) {
                 this._custom = value;
-                if (!value) {
-                    this._applyFile();
-                }
+                this._applyFile();
                 if (CC_EDITOR) {
                     cc.engine.repaintInEditMode();
-                //    self.preview = self.preview;
                 }
             }
         },
@@ -172,8 +181,8 @@ var properties = {
     /**
      * !#en The plist file.
      * !#zh plist 格式的粒子配置文件。
-     * @property {string} file
-     * @default ""
+     * @property {ParticleAsset} file
+     * @default null
      */
     _file: {
         default: null,
@@ -190,7 +199,6 @@ var properties = {
                     this._applyFile();
                     if (CC_EDITOR) {
                         cc.engine.repaintInEditMode();
-                        //self.preview = self.preview;
                     }
                 }
                 else {
@@ -231,20 +239,25 @@ var properties = {
             }
             this._renderSpriteFrame = value;
 
-            if (value._uuid) {
+            if (!value || value._uuid) {
                 this._spriteFrame = value;
             }
 
-            if ((lastSprite && lastSprite.getTexture()) !== (value && value.getTexture())) {
-                this._texture = null;
-                this._applySpriteFrame(lastSprite);
-            }
+            this._applySpriteFrame(lastSprite);
             if (CC_EDITOR) {
                 this.node.emit('spriteframe-changed', this);
             }
         },
         type: cc.SpriteFrame,
         tooltip: CC_DEV && 'i18n:COMPONENT.particle_system.spriteFrame'
+    },
+
+
+    // just used to read data from 1.x
+    _texture: {
+        default: null,
+        type: cc.Texture2D,
+        editorOnly: true,
     },
 
     /**
@@ -256,10 +269,12 @@ var properties = {
      */
     texture: {
         get: function () {
-            return this._texture;
+            return this._getTexture();
         },
         set: function (value) {
-            cc.warnID(6017);
+            if (value) {
+                cc.warnID(6017);
+            }
         },
         type: cc.Texture2D,
         tooltip: CC_DEV && 'i18n:COMPONENT.particle_system.texture',
@@ -519,7 +534,7 @@ var properties = {
      * @property {Vec2} sourcePos
      * @default cc.Vec2.ZERO
      */
-    sourcePos: cc.v2(0, 0),
+    sourcePos: cc.Vec2.ZERO,
 
     /**
      * !#en Variation of source position.
@@ -527,7 +542,7 @@ var properties = {
      * @property {Vec2} posVar
      * @default cc.Vec2.ZERO
      */
-    posVar: cc.v2(0, 0),
+    posVar: cc.Vec2.ZERO,
 
     /**
      * !#en Particles movement type.
@@ -535,9 +550,20 @@ var properties = {
      * @property {ParticleSystem.PositionType} positionType
      * @default ParticleSystem.PositionType.FREE
      */
-    positionType: {
+    _positionType: {
         default: PositionType.FREE,
-        type: PositionType
+        formerlySerializedAs: "positionType"
+    },
+
+    positionType: {
+        type: PositionType,
+        get () {
+            return this._positionType;
+        },
+        set (val) {
+            this._positionType = val;
+            this._updateMaterial();
+        }
     },
 
     /**
@@ -559,7 +585,7 @@ var properties = {
      * @property {Vec2} gravity
      * @default cc.Vec2.ZERO
      */
-    gravity: cc.v2(0, 0),
+    gravity: cc.Vec2.ZERO,
     /**
      * !#en Speed of the emitter.
      * !#zh 速度。
@@ -655,6 +681,7 @@ var properties = {
      * @default 0
      */
     rotatePerSVar: 0
+
 };
 
 /**
@@ -699,10 +726,12 @@ var properties = {
  *
  * @class ParticleSystem
  * @extends RenderComponent
+ * @uses BlendFunc
  */
 var ParticleSystem = cc.Class({
     name: 'cc.ParticleSystem',
     extends: RenderComponent,
+    mixins: [BlendFunc],
     editor: CC_EDITOR && {
         menu: 'i18n:MAIN_MENU.component.renderers/ParticleSystem',
         inspector: 'packages://inspector/inspectors/comps/particle-system.js',
@@ -710,10 +739,14 @@ var ParticleSystem = cc.Class({
         executeInEditMode: true
     },
 
-    ctor: function () {
+    ctor () {
+        this.initProperties();
+    },
+
+    initProperties () {
         this._previewTimer = null;
         this._focused = false;
-        this._texture = null;
+        this._aspectRatio = 1;
 
         this._simulator = new ParticleSimulator(this);
 
@@ -773,13 +806,27 @@ var ParticleSystem = cc.Class({
 
     onFocusInEditor: CC_EDITOR && function () {
         this._focused = true;
-        if (this.preview) {
-            this.resetSystem();
+        let components = getParticleComponents(this.node);
+        for (let i = 0; i < components.length; ++i) {
+            components[i]._startPreview();
         }
     },
 
     onLostFocusInEditor: CC_EDITOR && function () {
         this._focused = false;
+        let components = getParticleComponents(this.node);
+        for (let i = 0; i < components.length; ++i) {
+            components[i]._stopPreview();
+        }
+    },
+
+    _startPreview: CC_EDITOR && function () {
+        if (this.preview) {
+            this.resetSystem();
+        }
+    },
+
+    _stopPreview: CC_EDITOR && function () {
         if (this.preview) {
             this.resetSystem();
             this.stopSystem();
@@ -793,10 +840,50 @@ var ParticleSystem = cc.Class({
 
     // LIFE-CYCLE METHODS
 
-    __preload: function () {
-        if (this._file) { 
-            if (this._custom) { 
-                var missCustomTexture = !this._texture; 
+    // just used to read data from 1.x
+    _convertTextureToSpriteFrame: CC_EDITOR && function () {
+        if (this._spriteFrame) {
+            return;
+        }
+        let texture = this.texture;
+        if (!texture || !texture._uuid) {
+            return;
+        }
+
+        let _this = this;
+        Editor.assetdb.queryMetaInfoByUuid(texture._uuid, function (err, metaInfo) {
+            if (err) return Editor.error(err);
+            let meta = JSON.parse(metaInfo.json);
+            if (meta.type === 'raw') {
+                const NodeUtils = Editor.require('app://editor/page/scene-utils/utils/node');
+                let nodePath = NodeUtils.getNodePath(_this.node);
+                return Editor.warn(`The texture ${metaInfo.assetUrl} used by particle ${nodePath} does not contain any SpriteFrame, please set the texture type to Sprite and reassign the SpriteFrame to the particle component.`);
+            }
+            else {
+                let Url = require('fire-url');
+                let name = Url.basenameNoExt(metaInfo.assetPath);
+                let uuid = meta.subMetas[name].uuid;
+                cc.assetManager.loadAny(uuid, function (err, sp) {
+                    if (err) return Editor.error(err);
+                    _this.spriteFrame = sp;
+                });
+            }
+        });
+    },
+
+    __preload () {
+        this._super();
+
+        if (CC_EDITOR) {
+            this._convertTextureToSpriteFrame();
+        }
+
+        if (this._custom && this.spriteFrame && !this._renderSpriteFrame) {
+            this._applySpriteFrame(this.spriteFrame);
+        }
+        else if (this._file) {
+            if (this._custom) {
+                let missCustomTexture = !this._getTexture();
                 if (missCustomTexture) { 
                     this._applyFile();
                 }
@@ -820,27 +907,21 @@ var ParticleSystem = cc.Class({
         }
     },
 
-    onLoad () {
-        if (!this._ia) {
-            ParticleSystem._assembler.createIA(this);
-        }
-    },
-
-    onEnable () {
-        this._super();
-        this.node._renderFlag &= ~RenderFlow.FLAG_RENDER;
-        this._activateMaterial();
-    },
-
     onDestroy () {
         if (this.autoRemoveOnFinish) {
             this.autoRemoveOnFinish = false;    // already removed
         }
+        if (this._buffer) {
+            this._buffer.destroy();
+            this._buffer = null;
+        }
+        // reset uv data so next time simulator will refill buffer uv info when exit edit mode from prefab.
+        this._simulator._uvFilled = 0;
         this._super();
     },
     
-    update (dt) {
-        if (!this._simulator.finished && this.sharedMaterials[0]) {
+    lateUpdate (dt) {
+        if (!this._simulator.finished) {
             this._simulator.step(dt);
         }
     },
@@ -881,7 +962,7 @@ var ParticleSystem = cc.Class({
     resetSystem: function () {
         this._stopped = false;
         this._simulator.reset();
-        this._activateMaterial();
+        this.markForRender(true);
     },
 
     /**
@@ -913,11 +994,11 @@ var ParticleSystem = cc.Class({
     // PRIVATE METHODS
 
     _applyFile: function () {
-        var file = this._file;
+        let file = this._file;
         if (file) {
             var self = this;
-            cc.loader.load(file.nativeUrl, function (err, content) {
-                if (err || !content) {
+            cc.assetManager.postLoadNative(file, function (err) {
+                if (err || !file._nativeAsset) {
                     cc.errorID(6029);
                     return;
                 }
@@ -927,22 +1008,26 @@ var ParticleSystem = cc.Class({
 
                 self._plistFile = file.nativeUrl;
                 if (!self._custom) {
-                    self._initWithDictionary(content);
+                    self._initWithDictionary(file._nativeAsset);
                 }
-                if (!self.spriteFrame) {
+
+                if (!self._spriteFrame) {
                     if (file.spriteFrame) {
                         self.spriteFrame = file.spriteFrame;
                     }
                     else if (self._custom) {
-                        self._initTextureWithDictionary(content);
+                        self._initTextureWithDictionary(file._nativeAsset);
                     }
+                }
+                else if (!self._renderSpriteFrame && self._spriteFrame) {
+                    self._applySpriteFrame(self.spriteFrame);
                 }
             });
         }
     },
 
     _initTextureWithDictionary: function (dict) {
-        var imgPath = cc.path.changeBasename(this._plistFile, dict["textureFileName"] || '');
+        let imgPath = cc.path.changeBasename(this._plistFile, dict["textureFileName"] || '');
         // texture
         if (dict["textureFileName"]) {
             // Try to get the texture from the cache
@@ -952,37 +1037,42 @@ var ParticleSystem = cc.Class({
                     this._initTextureWithDictionary(dict);
                 }
                 else {
+                    cc.assetManager.assets.add(imgPath, texture);
                     this.spriteFrame = new cc.SpriteFrame(texture);
                 }
             }, this);
         } else if (dict["textureImageData"]) {
-            var textureData = dict["textureImageData"];
+            let textureData = dict["textureImageData"];
 
             if (textureData && textureData.length > 0) {
-                var buffer = codec.unzipBase64AsArray(textureData, 1);
-                if (!buffer) {
-                    cc.logID(6030);
-                    return false;
-                }
+                let tex = cc.assetManager.assets.get(imgPath);
+                
+                if (!tex) {
+                    let buffer = codec.unzipBase64AsArray(textureData, 1);
+                    if (!buffer) {
+                        cc.warnID(6030, this._file.name);
+                        return false;
+                    }
 
-                var imageFormat = getImageFormatByData(buffer);
-                if (imageFormat !== macro.ImageFormat.TIFF && imageFormat !== macro.ImageFormat.PNG) {
-                    cc.logID(6031);
-                    return false;
-                }
+                    let imageFormat = getImageFormatByData(buffer);
+                    if (imageFormat !== macro.ImageFormat.TIFF && imageFormat !== macro.ImageFormat.PNG) {
+                        cc.warnID(6031, this._file.name);
+                        return false;
+                    }
 
-                var canvasObj = document.createElement("canvas");
-                if(imageFormat === macro.ImageFormat.PNG){
-                    var myPngObj = new PNGReader(buffer);
-                    myPngObj.render(canvasObj);
-                } else {
-                    tiffReader.parseTIFF(buffer,canvasObj);
+                    let canvasObj = document.createElement("canvas");
+                    if(imageFormat === macro.ImageFormat.PNG){
+                        let myPngObj = new PNGReader(buffer);
+                        myPngObj.render(canvasObj);
+                    } else {
+                        tiffReader.parseTIFF(buffer,canvasObj);
+                    }
+                    tex = textureUtil.cacheImage(imgPath, canvasObj);
                 }
-
-                var tex = textureUtil.cacheImage(imgPath, canvasObj);
+                
                 if (!tex)
-                    cc.logID(6032);
-                // TODO: Use cc.loader to load asynchronously the SpriteFrame object, avoid using textureUtil
+                    cc.warnID(6032, this._file.name);
+                // TODO: Use cc.assetManager to load asynchronously the SpriteFrame object, avoid using textureUtil
                 this.spriteFrame = new cc.SpriteFrame(tex);
             }
             else {
@@ -1001,7 +1091,13 @@ var ParticleSystem = cc.Class({
         this.lifeVar = parseFloat(dict["particleLifespanVariance"] || 0);
 
         // emission Rate
-        this.emissionRate = Math.min(this.totalParticles / this.life, Number.MAX_VALUE);
+        let _tempEmissionRate = dict["emissionRate"];
+        if (_tempEmissionRate) {
+            this.emissionRate = _tempEmissionRate;
+        }
+        else {
+            this.emissionRate = Math.min(this.totalParticles / this.life, Number.MAX_VALUE);
+        }
 
         // duration
         this.duration = parseFloat(dict["duration"] || 0);
@@ -1011,25 +1107,25 @@ var ParticleSystem = cc.Class({
         this.dstBlendFactor = parseInt(dict["blendFuncDestination"] || macro.ONE_MINUS_SRC_ALPHA);
 
         // color
-        var locStartColor = this._startColor;
+        let locStartColor = this._startColor;
         locStartColor.r = parseFloat(dict["startColorRed"] || 0) * 255;
         locStartColor.g = parseFloat(dict["startColorGreen"] || 0) * 255;
         locStartColor.b = parseFloat(dict["startColorBlue"] || 0) * 255;
         locStartColor.a = parseFloat(dict["startColorAlpha"] || 0) * 255;
 
-        var locStartColorVar = this._startColorVar;
+        let locStartColorVar = this._startColorVar;
         locStartColorVar.r = parseFloat(dict["startColorVarianceRed"] || 0) * 255;
         locStartColorVar.g = parseFloat(dict["startColorVarianceGreen"] || 0) * 255;
         locStartColorVar.b = parseFloat(dict["startColorVarianceBlue"] || 0) * 255;
         locStartColorVar.a = parseFloat(dict["startColorVarianceAlpha"] || 0) * 255;
 
-        var locEndColor = this._endColor;
+        let locEndColor = this._endColor;
         locEndColor.r = parseFloat(dict["finishColorRed"] || 0) * 255;
         locEndColor.g = parseFloat(dict["finishColorGreen"] || 0) * 255;
         locEndColor.b = parseFloat(dict["finishColorBlue"] || 0) * 255;
         locEndColor.a = parseFloat(dict["finishColorAlpha"] || 0) * 255;
 
-        var locEndColorVar = this._endColorVar;
+        let locEndColorVar = this._endColorVar;
         locEndColorVar.r = parseFloat(dict["finishColorVarianceRed"] || 0) * 255;
         locEndColorVar.g = parseFloat(dict["finishColorVarianceGreen"] || 0) * 255;
         locEndColorVar.b = parseFloat(dict["finishColorVarianceBlue"] || 0) * 255;
@@ -1042,12 +1138,14 @@ var ParticleSystem = cc.Class({
         this.endSizeVar = parseFloat(dict["finishParticleSizeVariance"] || 0);
 
         // position
-        // for 
+        // Make empty positionType value and old version compatible
+        this.positionType = parseFloat(dict['positionType'] !== undefined ? dict['positionType'] : PositionType.RELATIVE);
+        // for
         this.sourcePos.x = 0;
         this.sourcePos.y = 0;
         this.posVar.x = parseFloat(dict["sourcePositionVariancex"] || 0);
         this.posVar.y = parseFloat(dict["sourcePositionVariancey"] || 0);
-        
+
         // angle
         this.angle = parseFloat(dict["angle"] || 0);
         this.angleVar = parseFloat(dict["angleVariance"] || 0);
@@ -1079,7 +1177,7 @@ var ParticleSystem = cc.Class({
             this.tangentialAccelVar = parseFloat(dict["tangentialAccelVariance"] || 0);
 
             // rotation is dir
-            var locRotationIsDir = dict["rotationIsDir"] || "";
+            let locRotationIsDir = dict["rotationIsDir"] || "";
             if (locRotationIsDir !== null) {
                 locRotationIsDir = locRotationIsDir.toString().toLowerCase();
                 this.rotationIsDir = (locRotationIsDir === "true" || locRotationIsDir === "1");
@@ -1104,52 +1202,53 @@ var ParticleSystem = cc.Class({
         return true;
     },
 
-    _onTextureLoaded: function () {
-        this._texture = this._renderSpriteFrame.getTexture();
-        this._simulator.updateUVs(true);
-        // Reactivate material
-        this._activateMaterial();
+    _validateRender () {
+        let texture = this._getTexture();
+        if (!texture || !texture.loaded) {
+            this.disableRender();
+            return;
+        }
+        this._super();
     },
 
-    _applySpriteFrame: function (oldFrame) {
-        if (oldFrame && oldFrame.off) {
-            oldFrame.off('load', this._onTextureLoaded, this);
-        }
+    _onTextureLoaded () {
+        this._simulator.updateUVs(true);
+        this._syncAspect();
+        this._updateMaterial();
+        this.markForRender(true);
+    },
 
-        var spriteFrame = this._renderSpriteFrame = this._renderSpriteFrame || this._spriteFrame;
-        if (spriteFrame) {
-            if (spriteFrame.textureLoaded()) {
-                this._onTextureLoaded(null);
+    _syncAspect () {
+        let frameRect = this._renderSpriteFrame._rect;
+        this._aspectRatio = frameRect.width / frameRect.height;
+    },
+
+    _applySpriteFrame () {
+        this._renderSpriteFrame = this._renderSpriteFrame || this._spriteFrame;
+        if (this._renderSpriteFrame) {
+            if (this._renderSpriteFrame.textureLoaded()) {
+                this._onTextureLoaded();
             }
             else {
-                spriteFrame.once('load', this._onTextureLoaded, this);
-                spriteFrame.ensureLoadTexture();
+                this._renderSpriteFrame.onTextureLoaded(this._onTextureLoaded, this);
             }
         }
     },
 
-    _activateMaterial: function () {
-        let material = this.sharedMaterials[0];
-        if (!material) {
-            material = Material.getInstantiatedBuiltinMaterial('sprite', this);
-            material.define('useTexture', true);
-            material.define('useModel', true);
-        }
-
-        if (!this._texture || !this._texture.loaded) {
-            this.markForCustomIARender(false);
-            if (this._renderSpriteFrame) {
-                this._applySpriteFrame();
-            }
-        }
-        else {
-            this.markForUpdateRenderData(true);
-            this.markForCustomIARender(true);
-            material.setProperty('texture', this._texture);
-            this.setMaterial(0, material);
-        }
+    _getTexture () {
+        return (this._renderSpriteFrame && this._renderSpriteFrame.getTexture()) || this._texture;
     },
-    
+
+    _updateMaterial () {
+        let material = this.getMaterial(0);
+        if (!material) return;
+
+        material.define('CC_USE_MODEL', this._positionType !== PositionType.FREE);
+        material.setProperty('texture', this._getTexture());
+
+        BlendFunc.prototype._updateMaterial.call(this);
+    },
+
     _finishedSimulation: function () {
         if (CC_EDITOR) {
             if (this.preview && this._focused && !this.active && !cc.engine.isPlaying) {
@@ -1157,6 +1256,8 @@ var ParticleSystem = cc.Class({
             }
             return;
         }
+        this.resetSystem();
+        this.stopSystem();
         this.disableRender();
         if (this.autoRemoveOnFinish && this._stopped) {
             this.node.destroy();

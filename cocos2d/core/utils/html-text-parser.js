@@ -24,8 +24,8 @@
  THE SOFTWARE.
  ****************************************************************************/
 
-var eventRegx = /^(click)(\s)*=/;
-var imageAttrReg = /(\s)*src(\s)*=|(\s)*height(\s)*=|(\s)*width(\s)*=|(\s)*click(\s)*=|(\s)*param(\s)*=/;
+var eventRegx = /^(click)(\s)*=|(param)(\s)*=/;
+var imageAttrReg = /(\s)*src(\s)*=|(\s)*height(\s)*=|(\s)*width(\s)*=|(\s)*align(\s)*=|(\s)*offset(\s)*=|(\s)*click(\s)*=|(\s)*param(\s)*=/;
 /**
  * A utils class for parsing HTML texts. The parsed results will be an object array.
  */
@@ -37,6 +37,7 @@ var HtmlTextParser = function() {
     this._specialSymbolArray.push([/&amp;/g, '&']);
     this._specialSymbolArray.push([/&quot;/g, '"']);
     this._specialSymbolArray.push([/&apos;/g, '\'']);
+    this._specialSymbolArray.push([/&nbsp;/g, ' ']);
 };
 
 HtmlTextParser.prototype = {
@@ -48,25 +49,36 @@ HtmlTextParser.prototype = {
         var startIndex = 0;
         var length = htmlString.length;
         while (startIndex < length) {
-            var tagBeginIndex = htmlString.indexOf('<', startIndex);
+            var tagEndIndex = htmlString.indexOf('>', startIndex);
+            var tagBeginIndex = -1;
+            if (tagEndIndex >= 0) {
+                tagBeginIndex = htmlString.lastIndexOf('<', tagEndIndex);
+                var noTagBegin = tagBeginIndex < (startIndex - 1);
+
+                if (noTagBegin) {
+                    tagBeginIndex = htmlString.indexOf('<', tagEndIndex + 1);
+                    tagEndIndex = htmlString.indexOf('>', tagBeginIndex + 1);
+                }
+            }
+
             if (tagBeginIndex < 0) {
                 this._stack.pop();
                 this._processResult(htmlString.substring(startIndex));
                 startIndex = length;
             } else {
-                this._processResult(htmlString.substring(startIndex, tagBeginIndex));
-
-                var tagEndIndex = htmlString.indexOf('>', startIndex);
+                var newStr = htmlString.substring(startIndex, tagBeginIndex);
+                var tagStr = htmlString.substring(tagBeginIndex + 1, tagEndIndex);
+                if (tagStr === "") newStr = htmlString.substring(startIndex, tagEndIndex + 1);
+                this._processResult(newStr);
                 if (tagEndIndex === -1) {
                     // cc.error('The HTML tag is invalid!');
                     tagEndIndex = tagBeginIndex;
                 } else if (htmlString.charAt(tagBeginIndex + 1) === '\/'){
                     this._stack.pop();
                 } else {
-                    this._addToStack(htmlString.substring(tagBeginIndex + 1, tagEndIndex));
+                    this._addToStack(tagStr);
                 }
                 startIndex = tagEndIndex + 1;
-
             }
         }
 
@@ -143,34 +155,43 @@ HtmlTextParser.prototype = {
                     tagName = tagName.toLocaleLowerCase();
 
                     attribute = remainingArgument.substring(nextSpace).trim();
+                    if ( tagValue.endsWith( '\/' ) ) tagValue = tagValue.slice( 0, -1 );
                     if (tagName === "src") {
-                        obj.isImage = true
-                        if( tagValue.endsWith( '\/' ) ) tagValue = tagValue.substring( 0, tagValue.length - 1 );
-                        if( tagValue.indexOf('\'')===0 ) {
-                            isValidImageTag = true;
-                            tagValue = tagValue.substring( 1, tagValue.length - 1 );
-                        } else if( tagValue.indexOf('"')===0 ) {
-                            isValidImageTag = true;
-                            tagValue = tagValue.substring( 1, tagValue.length - 1 );
+                        switch (tagValue.charCodeAt(0)) {
+                            case 34: // "
+                            case 39: // '
+                                isValidImageTag = true;
+                                tagValue = tagValue.slice(1, -1);
+                                break;
                         }
+                        obj.isImage = true;
                         obj.src = tagValue;
                     } else if (tagName === "height") {
                         obj.imageHeight = parseInt(tagValue);
                     } else if (tagName === "width") {
                         obj.imageWidth = parseInt(tagValue);
+                    } else if (tagName === "align") {
+                        switch (tagValue.charCodeAt(0)) {
+                            case 34: // "
+                            case 39: // '
+                                tagValue = tagValue.slice(1, -1);
+                                break;
+                        }
+                        obj.imageAlign = tagValue.toLocaleLowerCase();
+                    } else if (tagName === "offset") {
+                        obj.imageOffset = tagValue;
                     } else if (tagName === "click") {
                         obj.event = this._processEventHandler(tagName + "=" + tagValue);
                     }
 
                     if (obj.event && tagName === 'param') {
-                        obj.event.param = tagValue;
+                        obj.event.param = tagValue.replace(/^\"|\"$/g, '');
                     }
 
                     header = attribute.match(imageAttrReg);
                 }
 
-                if( isValidImageTag && obj.isImage )
-                {
+                if( isValidImageTag && obj.isImage ) {
                     this._resultObjectArray.push({text: "", style: obj});
                 }
 
@@ -211,7 +232,7 @@ HtmlTextParser.prototype = {
                     }
 
                     if (obj.event && tagName === 'param') {
-                        obj.event.param = tagValue;
+                        obj.event.param = tagValue.replace(/^\"|\"$/g, '');
                     }
 
                     header = attribute.match(outlineAttrReg);
@@ -241,7 +262,6 @@ HtmlTextParser.prototype = {
             eventObj = this._processEventHandler(attribute);
             obj.event = eventObj;
         }
-
 
         return obj;
     },

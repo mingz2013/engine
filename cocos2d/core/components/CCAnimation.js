@@ -29,13 +29,11 @@ const AnimationClip = require('../../animation/animation-clip');
 const EventTarget = require('../event/event-target');
 const js = require('../platform/js');
 
-function equalClips (clip1, clip2) {
-    if (clip1 === clip2) {
-        return true;
-    }
-
-    return clip1 && clip2 && (clip1.name === clip2.name || clip1._uuid === clip2._uuid);
-}
+let equalClips = CC_EDITOR ? function (clip1, clip2) {
+    return clip1 === clip2 || (clip1 && clip2 && (clip1.name === clip2.name || clip1._uuid === clip2._uuid));
+} : function (clip1, clip2) {
+    return clip1 === clip2;
+};
 
 /**
  * !#en The event type supported by Animation
@@ -164,21 +162,13 @@ let Animation = cc.Class({
                     return;
                 }
 
+                if (this._defaultClip) {
+                    this.removeClip(this._defaultClip, true);
+                }
+                if (value) {
+                    this.addClip(value);
+                }
                 this._defaultClip = value;
-
-                if (!value) {
-                    return;
-                }
-
-                let clips = this._clips;
-
-                for (let i = 0, l = clips.length; i < l; i++) {
-                    if (equalClips(value, clips[i])) {
-                        return;
-                    }
-                }
-
-                this.addClip(value);
             },
             tooltip: CC_DEV && 'i18n:COMPONENT.animation.default_clip'
         },
@@ -198,6 +188,20 @@ let Animation = cc.Class({
             },
             type: AnimationClip,
             visible: false
+        },
+
+        // This property is used to watch clip changes in editor.
+        // Don't use in your game, use addClip/removeClip instead.
+        _writableClips: {
+            get () {
+                return this._clips;
+            },
+            set (val) {
+                this._didInit = false;
+                this._clips = val;
+                this._init();
+            },
+            type: [AnimationClip],
         },
 
         /**
@@ -431,8 +435,8 @@ let Animation = cc.Class({
         if (CC_EDITOR && (!state || !cc.js.array.contains(this._clips, state.clip))) {
             this._didInit = false;
 
-            if (this.animator) {
-                this.animator.stop();
+            if (this._animator) {
+                this._animator.stop();
             }
 
             this._init();
@@ -510,8 +514,7 @@ let Animation = cc.Class({
         let state;
         for (let name in this._nameToState) {
             state = this._nameToState[name];
-            let stateClip = state.clip;
-            if (stateClip === clip) {
+            if (equalClips(state.clip, clip)) {
                 break;
             }
         }
@@ -533,7 +536,7 @@ let Animation = cc.Class({
         }
 
         this._clips = this._clips.filter(function (item) {
-            return item !== clip;
+            return !equalClips(item, clip);
         });
 
         if (state) {
@@ -588,6 +591,7 @@ let Animation = cc.Class({
      * @typescript
      * on(type: string, callback: (event: Event.EventCustom) => void, target?: any, useCapture?: boolean): (event: Event.EventCustom) => void
      * on<T>(type: string, callback: (event: T) => void, target?: any, useCapture?: boolean): (event: T) => void
+     * on(type: string, callback: (type: string, state: cc.AnimationState) => void, target?: any, useCapture?: boolean): (type: string, state: cc.AnimationState) => void
      * @example
      * onPlay: function (type, state) {
      *     // callback
@@ -602,10 +606,9 @@ let Animation = cc.Class({
         let ret = this._EventTargetOn(type, callback, target, useCapture);
         
         if (type === 'lastframe') {
-            let array = this._animator._anims.array;
-            for (let i = 0; i < array.length; ++i) {
-                let state = array[i];
-                state._lastframeEventOn = true;
+            let states = this._nameToState;
+            for (let name in states) {
+                states[name]._lastframeEventOn = true;
             }
         }
 
@@ -635,10 +638,9 @@ let Animation = cc.Class({
         this._init();
 
         if (type === 'lastframe') {
-            let nameToState = this._nameToState;
-            for (let name in nameToState) {
-                let state = nameToState[name];
-                state._lastframeEventOn = false;
+            let states = this._nameToState;
+            for (let name in states) {
+                states[name]._lastframeEventOn = false;
             }
         }
 

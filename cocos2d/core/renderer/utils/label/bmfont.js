@@ -23,78 +23,22 @@
  THE SOFTWARE.
  ****************************************************************************/
 
-const macro = require('../../../platform/CCMacro');
+import Assembler2D from '../../assembler-2d';
 
+const textUtils = require('../../../utils/text-utils');
+const macro = require('../../../platform/CCMacro');
 const Label = require('../../../components/CCLabel');
 const Overflow = Label.Overflow;
 
-const textUtils = require('../../../utils/text-utils');
-
-let FontLetterDefinition = function() {
-    this._u = 0;
-    this._v = 0;
-    this._width = 0;
-    this._height = 0;
-    this._offsetX = 0;
-    this._offsetY = 0;
-    this._textureID = 0;
-    this._validDefinition = false;
-    this._xAdvance = 0;
-};
-
-cc.FontAtlas = function (fntConfig) {
-    this._letterDefinitions = {};
-};
-
-cc.FontAtlas.prototype = {
-    constructor: cc.FontAtlas,
-    addLetterDefinitions: function(letter, letterDefinition) {
-        this._letterDefinitions[letter] = letterDefinition;
-    },
-    cloneLetterDefinition: function() {
-        let copyLetterDefinitions = {};
-        for (let key in this._letterDefinitions) {
-            let value = new FontLetterDefinition();
-            cc.js.mixin(value, this._letterDefinitions[key]);
-            copyLetterDefinitions[key] = value;
-        }
-        return copyLetterDefinitions;
-    },
-    assignLetterDefinitions: function(letterDefinition) {
-        for (let key in this._letterDefinitions) {
-            let newValue = letterDefinition[key];
-            let oldValue = this._letterDefinitions[key];
-            cc.js.mixin(oldValue, newValue);
-        }
-    },
-    scaleFontLetterDefinition: function(scaleFactor) {
-        for (let fontDefinition in this._letterDefinitions) {
-            let letterDefinitions = this._letterDefinitions[fontDefinition];
-            letterDefinitions._width *= scaleFactor;
-            letterDefinitions._height *= scaleFactor;
-            letterDefinitions._offsetX *= scaleFactor;
-            letterDefinitions._offsetY *= scaleFactor;
-            letterDefinitions._xAdvance *= scaleFactor;
-        }
-    },
-    getLetterDefinitionForChar: function(char) {
-        let hasKey = this._letterDefinitions.hasOwnProperty(char.charCodeAt(0));
-        let letterDefinition;
-        if (hasKey) {
-            letterDefinition = this._letterDefinitions[char.charCodeAt(0)];
-        } else {
-            letterDefinition = null;
-        }
-        return letterDefinition;
-    }
-};
+const shareLabelInfo = require('../utils').shareLabelInfo;
 
 let LetterInfo = function() {
-    this._char = '';
-    this._valid = true;
-    this._positionX = 0;
-    this._positionY = 0;
-    this._lineIndex = 0;
+    this.char = '';
+    this.valid = true;
+    this.x = 0;
+    this.y = 0;
+    this.line = 0;
+    this.hash = "";
 };
 
 let _tmpRect = cc.rect();
@@ -105,23 +49,23 @@ let _horizontalKernings = [];
 let _lettersInfo = [];
 let _linesWidth = [];
 let _linesOffsetX = [];
-let _labelDimensions = cc.size();
 
-let _fontAtlas = null;
 let _fntConfig = null;
 let _numberOfLines = 0;
 let _textDesiredHeight =  0;
 let _letterOffsetY =  0;
 let _tailoredTopY =  0;
+
 let _tailoredBottomY =  0;
 let _bmfontScale =  1.0;
+
 let _lineBreakWithoutSpaces =  false;
 let _spriteFrame = null;
 let _lineSpacing = 0;
+let _contentSize = cc.size();
 let _string = '';
 let _fontSize = 0;
 let _originFontSize = 0;
-let _contentSize = cc.size();
 let _hAlign = 0;
 let _vAlign = 0;
 let _spacingX = 0;
@@ -132,121 +76,118 @@ let _labelWidth = 0;
 let _labelHeight = 0;
 let _maxLineWidth = 0;
 
-module.exports = {
+export default class BmfontAssembler extends Assembler2D {
     updateRenderData (comp) {
-        if (!comp._renderData.vertDirty) return;
+        if (!comp._vertsDirty) return;
         if (_comp === comp) return;
 
         _comp = comp;
         
-        this._updateProperties();
+        this._reserveQuads(comp, comp.string.toString().length);
+        this._updateFontFamily(comp);
+        this._updateProperties(comp);
+        this._updateLabelInfo(comp);
         this._updateContent();
+        this.updateWorldVerts(comp);
         
         _comp._actualFontSize = _fontSize;
         _comp.node.setContentSize(_contentSize);
 
-        _comp._renderData.vertDirty = _comp._renderData.uvDirty = false;
-
+        _comp._vertsDirty = false;
         _comp = null;
-        
         this._resetProperties();
-    },
+    }
 
     _updateFontScale () {
         _bmfontScale = _fontSize / _originFontSize;
-    },
+    }
 
-    _updateProperties () {
-        let fontAsset = _comp.font;
+    _updateFontFamily (comp) {
+        let fontAsset = comp.font;
         _spriteFrame = fontAsset.spriteFrame;
         _fntConfig = fontAsset._fntConfig;
+        shareLabelInfo.fontAtlas = fontAsset._fontDefDictionary;
 
-        _fontAtlas = _comp._fontAtlas;
-        if (!_fontAtlas) {
-            _fontAtlas = new cc.FontAtlas(_fntConfig);
-            
-            let fontDict = _fntConfig.fontDefDictionary;
+        this.packToDynamicAtlas(comp, _spriteFrame);
+    }
 
-            for (let fontDef in fontDict) {
-                let letterDefinition = new FontLetterDefinition();
+    _updateLabelInfo() {
+        // clear
+        shareLabelInfo.hash = "";
+        shareLabelInfo.margin = 0;
+    }
 
-                let rect = fontDict[fontDef].rect;
+    _updateProperties (comp) {
+        _string = comp.string.toString();
+        _fontSize = comp.fontSize;
+        _originFontSize = _fntConfig ? _fntConfig.fontSize : comp.fontSize;
+        _hAlign = comp.horizontalAlign;
+        _vAlign = comp.verticalAlign;
+        _spacingX = comp.spacingX;
+        _overflow = comp.overflow;
+        _lineHeight = comp._lineHeight;
+        
+        _contentSize.width = comp.node.width;
+        _contentSize.height = comp.node.height;
 
-                letterDefinition._offsetX = fontDict[fontDef].xOffset;
-                letterDefinition._offsetY = fontDict[fontDef].yOffset;
-                letterDefinition._width = rect.width;
-                letterDefinition._height = rect.height;
-                letterDefinition._u = rect.x;
-                letterDefinition._v = rect.y;
-                //FIXME: only one texture supported for now
-                letterDefinition._textureID = 0;
-                letterDefinition._validDefinition = true;
-                letterDefinition._xAdvance = fontDict[fontDef].xAdvance;
-
-                _fontAtlas.addLetterDefinitions(fontDef, letterDefinition);
-            }
-
-            _comp._fontAtlas = _fontAtlas;
-        }
-
-        _string = _comp.string.toString();
-        _fontSize = _comp.fontSize;
-        _originFontSize = _fntConfig.fontSize;
-        _contentSize.width = _comp.node._contentSize.width;
-        _contentSize.height = _comp.node._contentSize.height;
-        _hAlign = _comp.horizontalAlign;
-        _vAlign = _comp.verticalAlign;
-        _spacingX = _comp.spacingX;
-        _overflow = _comp.overflow;
-        _lineHeight = _comp._lineHeight;
-                
         // should wrap text
         if (_overflow === Overflow.NONE) {
             _isWrapText = false;
+            _contentSize.width += shareLabelInfo.margin * 2;
+            _contentSize.height += shareLabelInfo.margin * 2;
         }
         else if (_overflow === Overflow.RESIZE_HEIGHT) {
             _isWrapText = true;
+            _contentSize.height += shareLabelInfo.margin * 2;
         }
         else {
-            _isWrapText = _comp.enableWrapText;
+            _isWrapText = comp.enableWrapText;
         }
+        
+        shareLabelInfo.lineHeight = _lineHeight;
+        shareLabelInfo.fontSize = _fontSize;
 
         this._setupBMFontOverflowMetrics();
-    },
+    }
 
     _resetProperties () {
-        _fontAtlas = null;
         _fntConfig = null;
         _spriteFrame = null;
-    },
+        shareLabelInfo.hash = "";
+        shareLabelInfo.margin = 0;
+    }
 
     _updateContent () {
         this._updateFontScale();
         this._computeHorizontalKerningForText();
         this._alignText();
-    },
+    }
 
     _computeHorizontalKerningForText () {
         let string = _string;
         let stringLen = string.length;
 
-        let kerningDict = _fntConfig.kerningDict;
         let horizontalKernings = _horizontalKernings;
-
-        let prev = -1;
-        for (let i = 0; i < stringLen; ++i) {
-            let key = string.charCodeAt(i);
-            let kerningAmount = kerningDict[(prev << 16) | (key & 0xffff)] || 0;
-            if (i < stringLen - 1) {
-                horizontalKernings[i] = kerningAmount;
-            } else {
-                horizontalKernings[i] = 0;
+        let kerningDict;
+        _fntConfig && (kerningDict = _fntConfig.kerningDict);
+        if (kerningDict && !cc.js.isEmptyObject(kerningDict)) {
+            let prev = -1;
+            for (let i = 0; i < stringLen; ++i) {
+                let key = string.charCodeAt(i);
+                let kerningAmount = kerningDict[(prev << 16) | (key & 0xffff)] || 0;
+                if (i < stringLen - 1) {
+                    horizontalKernings[i] = kerningAmount;
+                } else {
+                    horizontalKernings[i] = 0;
+                }
+                prev = key;
             }
-            prev = key;
+        } else {
+            horizontalKernings.length = 0;
         }
-    },
+    }
 
-    _multilineTextWrap: function(nextTokenFunc) {
+    _multilineTextWrap (nextTokenFunc) {
         let textLen = _string.length;
 
         let lineIndex = 0;
@@ -260,10 +201,6 @@ module.exports = {
         let letterDef = null;
         let letterPosition = cc.v2(0, 0);
 
-        this._updateFontScale();
-
-        let letterDefinitions = _fontAtlas._letterDefinitions;
-
         for (let index = 0; index < textLen;) {
             let character = _string.charAt(index);
             if (character === "\n") {
@@ -271,7 +208,7 @@ module.exports = {
                 letterRight = 0;
                 lineIndex++;
                 nextTokenX = 0;
-                nextTokenY -= _lineHeight * _bmfontScale + _lineSpacing;
+                nextTokenY -= _lineHeight * this._getFontScale() + _lineSpacing;
                 this._recordPlaceholderInfo(index, character);
                 index++;
                 continue;
@@ -291,48 +228,50 @@ module.exports = {
                     this._recordPlaceholderInfo(letterIndex, character);
                     continue;
                 }
-                letterDef = _fontAtlas.getLetterDefinitionForChar(character);
+                letterDef = shareLabelInfo.fontAtlas.getLetterDefinitionForChar(character, shareLabelInfo);
                 if (!letterDef) {
                     this._recordPlaceholderInfo(letterIndex, character);
-                    console.log("Can't find letter definition in texture atlas " + _fntConfig.atlasName + " for letter:" + character);
+                    let atlasName = "";
+                    _fntConfig && (atlasName = _fntConfig.atlasName);
+                    console.log("Can't find letter definition in texture atlas " + atlasName + " for letter:" + character);
                     continue;
                 }
 
-                let letterX = nextLetterX + letterDef._offsetX * _bmfontScale;
+                let letterX = nextLetterX + letterDef.offsetX * _bmfontScale - shareLabelInfo.margin;
 
                 if (_isWrapText
                     && _maxLineWidth > 0
                     && nextTokenX > 0
-                    && letterX + letterDef._width * _bmfontScale > _maxLineWidth
+                    && letterX + letterDef.w * _bmfontScale > _maxLineWidth
                     && !textUtils.isUnicodeSpace(character)) {
                     _linesWidth.push(letterRight);
                     letterRight = 0;
                     lineIndex++;
                     nextTokenX = 0;
-                    nextTokenY -= (_lineHeight * _bmfontScale + _lineSpacing);
+                    nextTokenY -= (_lineHeight * this._getFontScale() + _lineSpacing);
                     newLine = true;
                     break;
                 } else {
                     letterPosition.x = letterX;
                 }
 
-                letterPosition.y = nextTokenY - letterDef._offsetY * _bmfontScale;
-                this._recordLetterInfo(letterDefinitions, letterPosition, character, letterIndex, lineIndex);
+                letterPosition.y = nextTokenY - letterDef.offsetY * _bmfontScale  + shareLabelInfo.margin;
+                this._recordLetterInfo(letterPosition, character, letterIndex, lineIndex);
 
                 if (letterIndex + 1 < _horizontalKernings.length && letterIndex < textLen - 1) {
                     nextLetterX += _horizontalKernings[letterIndex + 1];
                 }
 
-                nextLetterX += letterDef._xAdvance * _bmfontScale + _spacingX;
+                nextLetterX += letterDef.xAdvance * _bmfontScale + _spacingX  - shareLabelInfo.margin * 2;
 
-                tokenRight = letterPosition.x + letterDef._width * _bmfontScale;
+                tokenRight = letterPosition.x + letterDef.w * _bmfontScale  - shareLabelInfo.margin;
 
                 if (tokenHighestY < letterPosition.y) {
                     tokenHighestY = letterPosition.y;
                 }
 
-                if (tokenLowestY > letterPosition.y - letterDef._height * _bmfontScale) {
-                    tokenLowestY = letterPosition.y - letterDef._height * _bmfontScale;
+                if (tokenLowestY > letterPosition.y - letterDef.h * _bmfontScale) {
+                    tokenLowestY = letterPosition.y - letterDef.h * _bmfontScale;
                 }
 
             } //end of for loop
@@ -358,7 +297,7 @@ module.exports = {
         _linesWidth.push(letterRight);
 
         _numberOfLines = lineIndex + 1;
-        _textDesiredHeight = _numberOfLines * _lineHeight * _bmfontScale;
+        _textDesiredHeight = _numberOfLines * _lineHeight * this._getFontScale();
         if (_numberOfLines > 1) {
             _textDesiredHeight += (_numberOfLines - 1) * _lineSpacing;
         }
@@ -366,29 +305,37 @@ module.exports = {
         _contentSize.width = _labelWidth;
         _contentSize.height = _labelHeight;
         if (_labelWidth <= 0) {
-            _contentSize.width = parseFloat(longestLine.toFixed(2));
+            _contentSize.width = parseFloat(longestLine.toFixed(2)) + shareLabelInfo.margin * 2;
         }
         if (_labelHeight <= 0) {
-            _contentSize.height = parseFloat(_textDesiredHeight.toFixed(2));
+            _contentSize.height = parseFloat(_textDesiredHeight.toFixed(2)) + shareLabelInfo.margin * 2;
         }
 
         _tailoredTopY = _contentSize.height;
         _tailoredBottomY = 0;
-        if (highestY > 0) {
-            _tailoredTopY = _contentSize.height + highestY;
-        }
-        if (lowestY < -_textDesiredHeight) {
-            _tailoredBottomY = _textDesiredHeight + lowestY;
+
+        if (_overflow !== Overflow.CLAMP) {
+            if (highestY > 0) {
+                _tailoredTopY = _contentSize.height + highestY;
+            }
+    
+            if (lowestY < -_textDesiredHeight) {
+                _tailoredBottomY = _textDesiredHeight + lowestY;
+            }
         }
 
         return true;
-    },
+    }
 
-    _getFirstCharLen: function() {
+    _getFirstCharLen () {
         return 1;
-    },
+    }
 
-    _getFirstWordLen: function(text, startIndex, textLen) {
+    _getFontScale () {
+        return _overflow === Overflow.SHRINK ? _bmfontScale : 1;
+    }
+
+    _getFirstWordLen (text, startIndex, textLen) {
         let character = text.charAt(startIndex);
         if (textUtils.isUnicodeCJK(character)
             || character === "\n"
@@ -397,27 +344,27 @@ module.exports = {
         }
 
         let len = 1;
-        let letterDef = _fontAtlas.getLetterDefinitionForChar(character);
+        let letterDef = shareLabelInfo.fontAtlas.getLetterDefinitionForChar(character, shareLabelInfo);
         if (!letterDef) {
             return len;
         }
-        let nextLetterX = letterDef._xAdvance * _bmfontScale + _spacingX;
+        let nextLetterX = letterDef.xAdvance * _bmfontScale + _spacingX;
         let letterX;
         for (let index = startIndex + 1; index < textLen; ++index) {
             character = text.charAt(index);
 
-            letterDef = _fontAtlas.getLetterDefinitionForChar(character);
+            letterDef = shareLabelInfo.fontAtlas.getLetterDefinitionForChar(character, shareLabelInfo);
             if (!letterDef) {
                 break;
             }
-            letterX = nextLetterX + letterDef._offsetX * _bmfontScale;
+            letterX = nextLetterX + letterDef.offsetX * _bmfontScale;
 
-            if(letterX + letterDef._width * _bmfontScale > _maxLineWidth
+            if(letterX + letterDef.w * _bmfontScale > _maxLineWidth
                && !textUtils.isUnicodeSpace(character)
                && _maxLineWidth > 0) {
                 return len;
             }
-            nextLetterX += letterDef._xAdvance * _bmfontScale + _spacingX;
+            nextLetterX += letterDef.xAdvance * _bmfontScale + _spacingX;
             if (character === "\n"
                 || textUtils.isUnicodeSpace(character)
                 || textUtils.isUnicodeCJK(character)) {
@@ -427,41 +374,44 @@ module.exports = {
         }
 
         return len;
-    },
+    }
 
-    _multilineTextWrapByWord: function() {
+    _multilineTextWrapByWord () {
         return this._multilineTextWrap(this._getFirstWordLen);
-    },
+    }
 
-    _multilineTextWrapByChar: function() {
+    _multilineTextWrapByChar () {
         return this._multilineTextWrap(this._getFirstCharLen);
-    },
+    }
 
-    _recordPlaceholderInfo: function(letterIndex, char) {
+    _recordPlaceholderInfo (letterIndex, char) {
         if (letterIndex >= _lettersInfo.length) {
             let tmpInfo = new LetterInfo();
             _lettersInfo.push(tmpInfo);
         }
 
-        _lettersInfo[letterIndex]._char = char;
-        _lettersInfo[letterIndex]._valid = false;
-    },
+        _lettersInfo[letterIndex].char = char;
+        _lettersInfo[letterIndex].hash = char.charCodeAt(0) + shareLabelInfo.hash;
+        _lettersInfo[letterIndex].valid = false;
+    }
 
-    _recordLetterInfo: function(letterDefinitions, letterPosition, character, letterIndex, lineIndex) {
+    _recordLetterInfo (letterPosition, character, letterIndex, lineIndex) {
         if (letterIndex >= _lettersInfo.length) {
             let tmpInfo = new LetterInfo();
             _lettersInfo.push(tmpInfo);
         }
-        character = character.charCodeAt(0);
+        let char = character.charCodeAt(0);
+        let key = char + shareLabelInfo.hash;
 
-        _lettersInfo[letterIndex]._lineIndex = lineIndex;
-        _lettersInfo[letterIndex]._char = character;
-        _lettersInfo[letterIndex]._valid = letterDefinitions[character]._validDefinition;
-        _lettersInfo[letterIndex]._positionX = letterPosition.x;
-        _lettersInfo[letterIndex]._positionY = letterPosition.y;
-    },
+        _lettersInfo[letterIndex].line= lineIndex;
+        _lettersInfo[letterIndex].char = character;
+        _lettersInfo[letterIndex].hash = key;
+        _lettersInfo[letterIndex].valid = shareLabelInfo.fontAtlas.getLetter(key).valid;
+        _lettersInfo[letterIndex].x = letterPosition.x;
+        _lettersInfo[letterIndex].y = letterPosition.y;
+    }
 
-    _alignText: function() {
+    _alignText () {
         _textDesiredHeight = 0;
         _linesWidth.length = 0;
 
@@ -485,7 +435,7 @@ module.exports = {
                 this._shrinkLabelToContentSize(this._isHorizontalClamp);
             }
         }
-    },
+    }
 
     _scaleFontSizeDown (fontSize) {
         let shouldUpdateContent = true;
@@ -498,47 +448,41 @@ module.exports = {
         if (shouldUpdateContent) {
             this._updateContent();
         }
-    },
+    }
 
     _shrinkLabelToContentSize (lambda) {
         let fontSize = _fontSize;
-        let originalLineHeight = _lineHeight;
-        let fontAtlas = _fontAtlas;
-        
-        let i = 0;
-        let tempLetterDefinition = fontAtlas.cloneLetterDefinition();
-        let flag = true;
 
-        while (lambda()) {
-            ++i;
+        let left = 0, right = fontSize | 0, mid = 0;
+        while (left < right) {
+            mid = (left + right + 1) >> 1;
 
-            let newFontSize = fontSize - i;
-            flag = false;
+            let newFontSize = mid;
             if (newFontSize <= 0) {
                 break;
             }
 
-            let scale = newFontSize / fontSize;
-            fontAtlas.assignLetterDefinitions(tempLetterDefinition);
-            fontAtlas.scaleFontLetterDefinition(scale);
-            _lineHeight = originalLineHeight * scale;
+            _bmfontScale = newFontSize / _originFontSize;
+            
             if (!_lineBreakWithoutSpaces) {
                 this._multilineTextWrapByWord();
             } else {
                 this._multilineTextWrapByChar();
             }
             this._computeAlignmentOffset();
-        }
 
-        _lineHeight = originalLineHeight;
-        fontAtlas.assignLetterDefinitions(tempLetterDefinition);
-
-        if (!flag) {
-            if (fontSize - i >= 0) {
-                this._scaleFontSizeDown(fontSize - i);
+            if (lambda()) {
+                right = mid - 1;
+            } else {
+                left = mid;
             }
         }
-    },
+
+        let actualFontSize = left;
+        if (actualFontSize >= 0) {
+            this._scaleFontSizeDown(actualFontSize);
+        }
+    }
 
     _isVerticalClamp () {
         if (_textDesiredHeight > _contentSize.height) {
@@ -546,18 +490,17 @@ module.exports = {
         } else {
             return false;
         }
-    },
+    }
 
     _isHorizontalClamp () {
-        let letterDefinitions = _fontAtlas._letterDefinitions;
         let letterClamp = false;
         for (let ctr = 0, l = _string.length; ctr < l; ++ctr) {
             let letterInfo = _lettersInfo[ctr];
-            if (letterInfo._valid) {
-                let letterDef = letterDefinitions[letterInfo._char];
+            if (letterInfo.valid) {
+                let letterDef = shareLabelInfo.fontAtlas.getLetter(letterInfo.hash);
 
-                let px = letterInfo._positionX + letterDef._width / 2 * _bmfontScale;
-                let lineIndex = letterInfo._lineIndex;
+                let px = letterInfo.x + letterDef.w * _bmfontScale;
+                let lineIndex = letterInfo.line;
                 if (_labelWidth > 0) {
                     if (!_isWrapText) {
                         if(px > _contentSize.width){
@@ -576,7 +519,7 @@ module.exports = {
         }
 
         return letterClamp;
-    },
+    }
 
     _isHorizontalClamped (px, lineIndex) {
         let wordWidth = _linesWidth[lineIndex];
@@ -587,16 +530,17 @@ module.exports = {
         }else{
             return (wordWidth > _contentSize.width && letterOverClamp);
         }
-    },
+    }
 
     _updateQuads () {
-        let letterDefinitions = _fontAtlas._letterDefinitions;
-        
-        let texture = _spriteFrame._texture;
+        let texture = _spriteFrame ? _spriteFrame._texture : shareLabelInfo.fontAtlas.getTexture();
 
         let node = _comp.node;
-        let renderData = _comp._renderData;
-        renderData.dataLength = renderData.vertexCount = renderData.indiceCount = 0;
+
+        this.verticesCount = this.indicesCount = 0;
+        
+        // Need to reset dataLength in Canvas rendering mode.
+        this._renderData && (this._renderData.dataLength = 0);
 
         let contentSize = _contentSize,
             appx = node._anchorPoint.x * contentSize.width,
@@ -605,15 +549,15 @@ module.exports = {
         let ret = true;
         for (let ctr = 0, l = _string.length; ctr < l; ++ctr) {
             let letterInfo = _lettersInfo[ctr];
-            if (!letterInfo._valid) continue;
-            let letterDef = letterDefinitions[letterInfo._char];
+            if (!letterInfo.valid) continue;
+            let letterDef = shareLabelInfo.fontAtlas.getLetter(letterInfo.hash);
 
-            _tmpRect.height = letterDef._height;
-            _tmpRect.width = letterDef._width;
-            _tmpRect.x = letterDef._u;
-            _tmpRect.y = letterDef._v;
+            _tmpRect.height = letterDef.h;
+            _tmpRect.width = letterDef.w;
+            _tmpRect.x = letterDef.u;
+            _tmpRect.y = letterDef.v;
 
-            let py = letterInfo._positionY + _letterOffsetY;
+            let py = letterInfo.y + _letterOffsetY;
 
             if (_labelHeight > 0) {
                 if (py > _tailoredTopY) {
@@ -623,20 +567,20 @@ module.exports = {
                     py = py - clipTop;
                 }
 
-                if (py - letterDef._height * _bmfontScale < _tailoredBottomY) {
-                    _tmpRect.height = (py < _tailoredBottomY) ? 0 : (py - _tailoredBottomY);
+                if ((py - letterDef.h * _bmfontScale < _tailoredBottomY) && _overflow === Overflow.CLAMP) {
+                    _tmpRect.height = (py < _tailoredBottomY) ? 0 : (py - _tailoredBottomY) / _bmfontScale;
                 }
             }
 
-            let lineIndex = letterInfo._lineIndex;
-            let px = letterInfo._positionX + letterDef._width / 2 * _bmfontScale + _linesOffsetX[lineIndex];
+            let lineIndex = letterInfo.line;
+            let px = letterInfo.x + letterDef.w / 2 * _bmfontScale + _linesOffsetX[lineIndex];
 
             if (_labelWidth > 0) {
                 if (this._isHorizontalClamped(px, lineIndex)) {
                     if (_overflow === Overflow.CLAMP) {
                         _tmpRect.width = 0;
                     } else if (_overflow === Overflow.SHRINK) {
-                        if (_contentSize.width > letterDef._width) {
+                        if (_contentSize.width > letterDef.w) {
                             ret = false;
                             break;
                         } else {
@@ -647,38 +591,41 @@ module.exports = {
             }
 
             if (_tmpRect.height > 0 && _tmpRect.width > 0) {
-                let isRotated = _spriteFrame.isRotated();
+                let isRotated = this._determineRect(_tmpRect);
+                let letterPositionX = letterInfo.x + _linesOffsetX[letterInfo.line];
+                this.appendQuad(_comp, texture, _tmpRect, isRotated, letterPositionX - appx, py - appy, _bmfontScale);
+            }
+        }
+        this._quadsUpdated(_comp);
 
-                let originalSize = _spriteFrame._originalSize;
-                let rect = _spriteFrame._rect;
-                let offset = _spriteFrame._offset;
-                let trimmedLeft = offset.x + (originalSize.width - rect.width) / 2;
-                let trimmedTop = offset.y - (originalSize.height - rect.height) / 2;
+        return ret;
+    }
 
-                if(!isRotated) {
-                    _tmpRect.x += (rect.x - trimmedLeft);
-                    _tmpRect.y += (rect.y + trimmedTop);
-                } else {
-                    let originalX = _tmpRect.x;
-                    _tmpRect.x = rect.x + rect.height - _tmpRect.y - _tmpRect.height - trimmedTop;
-                    _tmpRect.y = originalX + rect.y - trimmedLeft;
-                    if (_tmpRect.y < 0) {
-                        _tmpRect.height = _tmpRect.height + trimmedTop;
-                    }
-                }
+    _determineRect (tempRect) {
+        let isRotated = _spriteFrame.isRotated();
 
-                let letterPositionX = letterInfo._positionX + _linesOffsetX[letterInfo._lineIndex];
-                this.appendQuad(renderData, texture, _tmpRect, isRotated, letterPositionX - appx, py - appy, _bmfontScale);
+        let originalSize = _spriteFrame._originalSize;
+        let rect = _spriteFrame._rect;
+        let offset = _spriteFrame._offset;
+        let trimmedLeft = offset.x + (originalSize.width - rect.width) / 2;
+        let trimmedTop = offset.y - (originalSize.height - rect.height) / 2;
+
+        if(!isRotated) {
+            tempRect.x += (rect.x - trimmedLeft);
+            tempRect.y += (rect.y + trimmedTop);
+        } else {
+            let originalX = tempRect.x;
+            tempRect.x = rect.x + rect.height - tempRect.y - tempRect.height - trimmedTop;
+            tempRect.y = originalX + rect.y - trimmedLeft;
+            if (tempRect.y < 0) {
+                tempRect.height = tempRect.height + trimmedTop;
             }
         }
 
-        return ret;
-    },
+        return isRotated;
+    }
 
-    appendQuad (renderData, texture, rect, rotated, x, y, scale) {
-    },
-
-    _computeAlignmentOffset: function() {
+    _computeAlignmentOffset () {
         _linesOffsetX.length = 0;
         
         switch (_hAlign) {
@@ -701,20 +648,19 @@ module.exports = {
                 break;
         }
 
-        switch (_vAlign) {
-            case macro.VerticalTextAlignment.TOP:
-                _letterOffsetY = _contentSize.height;
-                break;
-            case macro.VerticalTextAlignment.CENTER:
-                _letterOffsetY = (_contentSize.height + _textDesiredHeight) / 2;
-                break;
-            case macro.VerticalTextAlignment.BOTTOM:
-                _letterOffsetY = _textDesiredHeight;
-                break;
-            default:
-                break;
+        // TOP
+        _letterOffsetY = _contentSize.height;
+        if (_vAlign !== macro.VerticalTextAlignment.TOP) {
+            let blank = _contentSize.height - _textDesiredHeight + _lineHeight * this._getFontScale() - _originFontSize * _bmfontScale;
+            if (_vAlign === macro.VerticalTextAlignment.BOTTOM) {
+                // BOTTOM
+                _letterOffsetY -= blank;
+            } else {
+                // CENTER:
+                _letterOffsetY -= blank / 2;
+            }
         }
-    },
+    }
 
     _setupBMFontOverflowMetrics () {
         let newWidth = _contentSize.width,
@@ -731,8 +677,13 @@ module.exports = {
 
         _labelWidth = newWidth;
         _labelHeight = newHeight;
-        _labelDimensions.width = newWidth;
-        _labelDimensions.height = newHeight;
         _maxLineWidth = newWidth;
     }
-};
+
+    updateWorldVerts() {}
+
+    appendQuad (comp, texture, rect, rotated, x, y, scale) {}
+    _quadsUpdated (comp) {}
+
+    _reserveQuads () {}
+}

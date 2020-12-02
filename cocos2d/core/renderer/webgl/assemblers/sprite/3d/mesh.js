@@ -23,52 +23,31 @@
  THE SOFTWARE.
  ****************************************************************************/
 
-const js = require('../../../../../platform/js');
-const assembler = require('../2d/mesh');
-const fillVerticesWithoutCalc3D = require('../../utils').fillVerticesWithoutCalc3D;
+import Vec3 from '../../../../../value-types/vec3';
+const Assembler3D = require('../../../../assembler-3d');
+const MeshAssembler = require('../2d/mesh');
 
-const vec3 = cc.vmath.vec3;
-let vec3_temp = vec3.create();
+let vec3_temp = new Vec3();
 
-module.exports = js.addon({
-    updateWorldVerts (sprite) {
-        let node = sprite.node,
-            renderData = sprite._renderData,
-            data = renderData._data;
+export default class MeshAssembler3D extends MeshAssembler {
+    
+}
 
-        let matrix = node._worldMatrix;
-        for (let i = 0, l = renderData.vertexCount; i < l; i++) {
-            let local = data[i + l];
-            let world = data[i];
-            vec3.set(vec3_temp, local.x, local.y, 0);
-            vec3.transformMat4(world, vec3_temp, matrix);
+cc.js.mixin(MeshAssembler3D.prototype, Assembler3D, {
+    updateWorldVerts (comp) {
+        let matrix = comp.node._worldMatrix;
+        let local = this._local;
+        let world = this._renderData.vDatas[0];
+     
+        let floatsPerVert = this.floatsPerVert;
+        for (let i = 0, l = local.length/2; i < l; i++) {
+            Vec3.set(vec3_temp, local[i*2], local[i*2+1], 0);
+            Vec3.transformMat4(vec3_temp, vec3_temp, matrix);
+
+            let dstOffset = floatsPerVert * i;
+            world[dstOffset] = vec3_temp.x;
+            world[dstOffset+1] = vec3_temp.y;
+            world[dstOffset+2] = vec3_temp.z;
         }
-    },
-
-    fillBuffers (sprite, renderer) {
-        let vertices = sprite.spriteFrame.vertices;
-        if (!vertices) {
-            return;
-        }
-
-        // update world verts
-        if (renderer.worldMatDirty) {
-            this.updateWorldVerts(sprite);
-        }
-
-        // buffer
-        let buffer = renderer._meshBuffer3D,
-            indiceOffset = buffer.indiceOffset,
-            vertexId = buffer.vertexOffset;
-
-        let node = sprite.node;
-        fillVerticesWithoutCalc3D(node, buffer, sprite._renderData, node._color._val);
-
-        // buffer data may be realloc, need get reference after request.
-        let ibuf = buffer._iData;
-        let triangles = vertices.triangles;
-        for (let i = 0, l = triangles.length; i < l; i++) {
-            ibuf[indiceOffset++] = vertexId + triangles[i];
-        }
-    },
-}, assembler);
+    }
+});

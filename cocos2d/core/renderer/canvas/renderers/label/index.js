@@ -23,34 +23,54 @@
  THE SOFTWARE.
  ****************************************************************************/
 
-const ttf = require('./ttf');
-const bmfont = require('./bmfont');
+import Assembler from '../../../assembler';
+import Label from '../../../../components/CCLabel';
+import TTF from './ttf';
+import Bmfont from './bmfont';
 
-module.exports = {
-    getAssembler (comp) {
-        let assembler = ttf;
-        
-        if (comp.font instanceof cc.BitmapFont) {
-            assembler = bmfont;
+let canvasPool = {
+    pool: [],
+    get () {
+        let data = this.pool.pop();
+
+        if (!data) {
+            let canvas = document.createElement("canvas");
+            let context = canvas.getContext("2d");
+            data = {
+                canvas: canvas,
+                context: context
+            }
+
+            // default text info
+            context.textBaseline = 'alphabetic';
         }
 
-        return assembler;
+        return data;
     },
-
-    createData (comp) {
-        return comp._assembler.createData(comp);
-    },
-
-    draw (ctx, comp) {
-        // Check whether need to render
-        if (!comp._texture) {
-            return 0;
+    put (canvas) {
+        if (this.pool.length >= 32) {
+            return;
         }
-
-        let assembler = comp._assembler;
-        if (!assembler) return 0;
-        
-        assembler.updateRenderData(comp);
-        return assembler.draw(ctx, comp);
+        this.pool.push(canvas);
     }
 };
+
+Label._canvasPool = canvasPool;
+
+
+Assembler.register(Label, {
+    getConstructor(label) {
+        let ctor = TTF;
+        
+        if (label.font instanceof cc.BitmapFont) {
+            ctor = Bmfont;
+        } else if (label.cacheMode === Label.CacheMode.CHAR) {
+            cc.warn('sorry, canvas mode does not support CHAR mode currently!');
+        }
+
+        return ctor;
+    },
+
+    TTF,
+    Bmfont
+});

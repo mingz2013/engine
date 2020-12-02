@@ -65,7 +65,7 @@ let Orientation = cc.Enum({
     ISO: 2
 });
 
-/*
+/**
  * The property type of tiled map.
  * @enum TiledMap.Property
  * @static
@@ -114,7 +114,7 @@ let Property = cc.Enum({
     TILE: 5
 });
 
-/*
+/**
  * The tile flags of tiled map.
  * @enum TiledMap.TileFlag
  * @static
@@ -146,17 +146,17 @@ let TileFlag = cc.Enum({
      * @type {Number}
      * @static
      */
-    FLIPPED_ALL: (0x80000000 | 0x40000000 | 0x20000000) >>> 0,
+    FLIPPED_ALL: (0x80000000 | 0x40000000 | 0x20000000 | 0x10000000) >>> 0,
 
     /**
      * @property FLIPPED_MASK
      * @type {Number}
      * @static
      */
-    FLIPPED_MASK: (~((0x80000000 | 0x40000000 | 0x20000000) >>> 0)) >>> 0
+    FLIPPED_MASK: (~(0x80000000 | 0x40000000 | 0x20000000 | 0x10000000)) >>> 0
 });
 
-/*
+/**
  * !#en The stagger axis of Hex tiled map.
  * !#zh 六边形地图的 stagger axis 值
  * @enum TiledMap.StaggerAxis
@@ -178,10 +178,10 @@ let StaggerAxis = cc.Enum({
     STAGGERAXIS_Y : 1
 });
 
-/*
+/**
  * !#en The stagger index of Hex tiled map.
  * !#zh 六边形地图的 stagger index 值
- * @enum TiledMap.StaggerIndex
+ * @enum TiledMap.RenderOrder
  * @static
  */
 let StaggerIndex = cc.Enum({
@@ -200,12 +200,87 @@ let StaggerIndex = cc.Enum({
     STAGGERINDEX_EVEN : 1
 });
 
+/**
+ * !#en The render order of tiled map.
+ * !#zh 地图的渲染顺序
+ * @enum TiledMap.RenderOrder
+ * @static
+ */
+let RenderOrder = cc.Enum({
+    /**
+     * @property RightDown
+     * @type {Number}
+     * @static
+     */
+    RightDown : 0,
+    /**
+     * @property RightUp
+     * @type {Number}
+     * @static
+     */
+    RightUp : 1,
+    /**
+     * @property LeftDown
+     * @type {Number}
+     * @static
+     */
+    LeftDown: 2,
+    /**
+     * @property LeftUp
+     * @type {Number}
+     * @static
+     */
+    LeftUp: 3,
+});
+
+/**
+ * !#en TiledMap Object Type
+ * !#zh 地图物体类型
+ * @enum TiledMap.TMXObjectType
+ * @static
+ */
 let TMXObjectType = cc.Enum({
+    /**
+     * @property RECT
+     * @type {Number}
+     * @static
+     */
     RECT : 0,
+
+    /**
+     * @property ELLIPSE
+     * @type {Number}
+     * @static
+     */
     ELLIPSE : 1,
+
+    /**
+     * @property POLYGON
+     * @type {Number}
+     * @static
+     */
     POLYGON : 2,
+
+    /**
+     * @property POLYLINE
+     * @type {Number}
+     * @static
+     */
     POLYLINE : 3,
-    IMAGE : 4
+    
+    /**
+     * @property IMAGE
+     * @type {Number}
+     * @static
+     */
+    IMAGE : 4,
+
+    /**
+     * @property TEXT
+     * @type {Number}
+     * @static
+     */
+    TEXT: 5,
 });
 
 /**
@@ -224,11 +299,20 @@ let TiledMap = cc.Class({
     },
 
     ctor () {
+        // store all layer gid corresponding texture info, index is gid, format likes '[gid0]=tex-info,[gid1]=tex-info, ...'
+        this._texGrids = [];
+        // store all tileset texture, index is tileset index, format likes '[0]=texture0, [1]=texture1, ...'
+        this._textures = [];
+        this._tilesets = [];
+
+        this._animations = [];
+        this._imageLayers = [];
         this._layers = [];
         this._groups = [];
+        this._images = [];
         this._properties = [];
         this._tileProperties = [];
-        
+
         this._mapSize = cc.size(0, 0);
         this._tileSize = cc.size(0, 0);
     },
@@ -239,7 +323,8 @@ let TiledMap = cc.Class({
         TileFlag: TileFlag,
         StaggerAxis: StaggerAxis,
         StaggerIndex: StaggerIndex,
-        TMXObjectType: TMXObjectType
+        TMXObjectType: TMXObjectType,
+        RenderOrder: RenderOrder
     },
 
     properties: {
@@ -344,6 +429,19 @@ let TiledMap = cc.Class({
     },
 
     /**
+     * !#en enable or disable culling
+     * !#zh 开启或关闭裁剪。
+     * @method enableCulling
+     * @param value
+     */
+    enableCulling (value) {
+        let layers = this._layers;
+        for (let i = 0; i < layers.length; ++i) {
+            layers[i].enableCulling(value);
+        }
+    },
+
+    /**
      * !#en Gets the map properties.
      * !#zh 获取地图的属性。
      * @method getProperties
@@ -364,7 +462,7 @@ let TiledMap = cc.Class({
      * @method getLayers
      * @returns {TiledLayer[]}
      * @example
-     * let layers = titledMap.allLayers();
+     * let layers = titledMap.getLayers();
      * for (let i = 0; i < layers.length; ++i) {
      *     cc.log("Layers: " + layers[i]);
      * }
@@ -391,8 +489,18 @@ let TiledMap = cc.Class({
                 return layer;
             }
         }
-
         return null;
+    },
+
+    _changeLayer (layerName, replaceLayer) {
+        let layers = this._layers;
+        for (let i = 0, l = layers.length; i < l; i++) {
+            let layer = layers[i];
+            if (layer && layer.getLayerName() === layerName) {
+                layers[i] = replaceLayer;
+                return;
+            }
+        }
     },
 
     /**
@@ -443,11 +551,22 @@ let TiledMap = cc.Class({
         if (file) {
             let texValues = file.textures;
             let texKeys = file.textureNames;
+            let texSizes = file.textureSizes;
             let textures = {};
+            let textureSizes = {};
             for (let i = 0; i < texValues.length; ++i) {
-                textures[texKeys[i]] = texValues[i];
+                let texName = texKeys[i];
+                textures[texName] = texValues[i];
+                textureSizes[texName] = texSizes[i];
             }
-            
+
+            let imageLayerTextures = {};
+            texValues = file.imageLayerTextures;
+            texKeys = file.imageLayerTextureNames;
+            for (let i = 0; i < texValues.length; ++i) {
+                imageLayerTextures[texKeys[i]] = texValues[i];
+            }
+
             let tsxFileNames = file.tsxFileNames;
             let tsxFiles = file.tsxFiles;
             let tsxMap = {};
@@ -457,7 +576,7 @@ let TiledMap = cc.Class({
                 }
             }
 
-            let mapInfo = new cc.TMXMapInfo(file.tmxXmlStr, tsxMap, textures);
+            let mapInfo = new cc.TMXMapInfo(file.tmxXmlStr, tsxMap, textures, textureSizes, imageLayerTextures);
             let tilesets = mapInfo.getTilesets();
             if(!tilesets || tilesets.length === 0)
                 cc.logID(7241);
@@ -465,7 +584,7 @@ let TiledMap = cc.Class({
             this._buildWithMapInfo(mapInfo);
         }
         else {
-            this._releaseMapInfo()
+            this._releaseMapInfo();
         }
     },
 
@@ -473,115 +592,327 @@ let TiledMap = cc.Class({
         // remove the layers & object groups added before
         let layers = this._layers;
         for (let i = 0, l = layers.length; i < l; i++) {
-            layers[i].node.removeFromParent();
+            layers[i].node.removeFromParent(true);
+            layers[i].node.destroy();
         }
         layers.length = 0;
 
         let groups = this._groups;
         for (let i = 0, l = groups.length; i < l; i++) {
-            groups[i].node.removeFromParent();
+            groups[i].node.removeFromParent(true);
+            groups[i].node.destroy();
         }
         groups.length = 0;
+
+        let images = this._images;
+        for (let i = 0, l = images.length; i < l; i++) {
+            images[i].removeFromParent(true);
+            images[i].destroy();
+        }
+        images.length = 0;
     },
 
     _syncAnchorPoint () {
         let anchor = this.node.getAnchorPoint();
-        for (let i = 0, l = this._layers.length; i < l; i++) {
-            this._layers[i].node.setAnchorPoint(anchor);
+        let leftTopX = this.node.width * anchor.x;
+        let leftTopY = this.node.height * (1 - anchor.y);
+        let i, l;
+        for (i = 0, l = this._layers.length; i < l; i++) {
+            let layerInfo = this._layers[i];
+            let layerNode = layerInfo.node;
+            // Tiled layer sync anchor to map because it's old behavior,
+            // do not change the behavior avoid influence user's existed logic.
+            layerNode.setAnchorPoint(anchor);
+        }
+
+        for (i = 0, l = this._groups.length; i < l; i++) {
+            let groupInfo = this._groups[i];
+            let groupNode = groupInfo.node;
+            // Group layer not sync anchor to map because it's old behavior,
+            // do not change the behavior avoid influence user's existing logic.
+            groupNode.anchorX = 0.5;
+            groupNode.anchorY = 0.5;
+            groupNode.x = groupInfo._offset.x - leftTopX + groupNode.width * groupNode.anchorX;
+            groupNode.y = groupInfo._offset.y + leftTopY - groupNode.height * groupNode.anchorY;
+        }
+
+        for (i = 0, l = this._images.length; i < l; i++) {
+            let image = this._images[i];
+            image.anchorX = 0.5;
+            image.anchorY = 0.5;
+            image.x = image._offset.x - leftTopX + image.width * image.anchorX;
+            image.y = image._offset.y + leftTopY - image.height * image.anchorY;
         }
     },
-    
-    _buildWithMapInfo (mapInfo) {
-        this._mapSize = mapInfo.getMapSize();
-        this._tileSize = mapInfo.getTileSize();
-        this._mapOrientation = mapInfo.orientation;
-        this._properties = mapInfo.properties;
-        this._tileProperties = mapInfo.getTileProperties();
 
-        this._releaseMapInfo();
+    _fillAniGrids (texGrids, animations) {
+        for (let i in animations) {
+            let animation = animations[i];
+            if (!animation) continue;
+            let frames = animation.frames;
+            for (let j = 0; j < frames.length; j++) {
+                let frame = frames[j];
+                frame.grid = texGrids[frame.tileid];
+            }
+        }
+    },
+
+    _buildLayerAndGroup () {
+        let tilesets = this._tilesets;
+        let texGrids = this._texGrids;
+        let animations = this._animations;
+        texGrids.length = 0;
+        for (let i = 0, l = tilesets.length; i < l; ++i) {
+            let tilesetInfo = tilesets[i];
+            if (!tilesetInfo) continue;
+            cc.TiledMap.fillTextureGrids(tilesetInfo, texGrids, i);
+        }
+        this._fillAniGrids(texGrids, animations);
 
         let layers = this._layers;
         let groups = this._groups;
+        let images = this._images;
+        let oldNodeNames = {};
+        for (let i = 0, n = layers.length; i < n; i++) {
+            oldNodeNames[layers[i].node._name] = true;
+        }
+        for (let i = 0, n = groups.length; i < n; i++) {
+            oldNodeNames[groups[i].node._name] = true;
+        }
+        for (let i = 0, n = images.length; i < n; i++) {
+            oldNodeNames[images[i]._name] = true;
+        }
+
+        layers = this._layers = [];
+        groups = this._groups = [];
+        images = this._images = [];
+
+        let mapInfo = this._mapInfo;
         let node = this.node;
         let layerInfos = mapInfo.getAllChildren();
+        let textures = this._textures;
+        let maxWidth = 0;
+        let maxHeight = 0;
+
         if (layerInfos && layerInfos.length > 0) {
             for (let i = 0, len = layerInfos.length; i < len; i++) {
                 let layerInfo = layerInfos[i];
                 let name = layerInfo.name;
 
                 let child = this.node.getChildByName(name);
+                oldNodeNames[name] = false;
+
                 if (!child) {
                     child = new cc.Node();
                     child.name = name;
-                    
                     node.addChild(child);
                 }
 
-                if (layerInfo instanceof cc.TMXLayerInfo && layerInfo.visible) {
+                child.setSiblingIndex(i);
+                child.active = layerInfo.visible;
+
+                if (layerInfo instanceof cc.TMXLayerInfo) {
                     let layer = child.getComponent(cc.TiledLayer);
                     if (!layer) {
                         layer = child.addComponent(cc.TiledLayer);
                     }
-
-                    let tileset = this._tilesetForLayer(layerInfo, mapInfo);
-                    layer._init(tileset, layerInfo, mapInfo);
+                    
+                    layer._init(layerInfo, mapInfo, tilesets, textures, texGrids);
 
                     // tell the layerinfo to release the ownership of the tiles map.
                     layerInfo.ownTiles = false;
-
-                    // update content size with the max size
-                    this.node.width = Math.max(this.node.width, child.width);
-                    this.node.height = Math.max(this.node.height, child.height);
-
                     layers.push(layer);
                 }
-                else if (layerInfo instanceof  cc.TMXObjectGroupInfo) {
+                else if (layerInfo instanceof cc.TMXObjectGroupInfo) {
                     let group = child.getComponent(cc.TiledObjectGroup);
                     if (!group) {
                         group = child.addComponent(cc.TiledObjectGroup);
                     }
-
-                    group._init(layerInfo, mapInfo);
+                    group._init(layerInfo, mapInfo, texGrids);
                     groups.push(group);
                 }
+                else if (layerInfo instanceof cc.TMXImageLayerInfo) {
+                    let texture = layerInfo.sourceImage;
+                    child.opacity = layerInfo.opacity;
+                    child.layerInfo = layerInfo;
+                    child._offset = cc.v2(layerInfo.offset.x, -layerInfo.offset.y);
+
+                    let image = child.getComponent(cc.Sprite);
+                    if (!image) {
+                        image = child.addComponent(cc.Sprite);
+                    }
+                    
+                    let spf = image.spriteFrame || new cc.SpriteFrame();
+                    spf.setTexture(texture);
+                    image.spriteFrame = spf;
+
+                    child.width = texture.width;
+                    child.height = texture.height;
+                    images.push(child);
+                }
+
+                maxWidth = Math.max(maxWidth, child.width);
+                maxHeight = Math.max(maxHeight, child.height);
             }
         }
 
+        let children = node.children;
+        for (let i = 0, n = children.length; i < n; i++) {
+            let c = children[i];
+            if (oldNodeNames[c._name]) {
+                c.destroy();
+            }
+        }
+
+        this.node.width = maxWidth;
+        this.node.height = maxHeight;
         this._syncAnchorPoint();
     },
 
-    _tilesetForLayer (layerInfo, mapInfo) {
-        let size = layerInfo._layerSize;
-        let tilesets = mapInfo.getTilesets();
-        if (tilesets) {
-            for (let i = tilesets.length - 1; i >= 0; i--) {
-                let tileset = tilesets[i];
-                if (tileset) {
-                    for (let y = 0; y < size.height; y++) {
-                        for (let x = 0; x < size.width; x++) {
-                            let pos = x + size.width * y;
-                            let gid = layerInfo._tiles[pos];
-                            if (gid !== 0) {
-                                // Optimization: quick return
-                                // if the layer is invalid (more than 1 tileset per layer) an cc.assert will be thrown later
-                                if (((gid & cc.TiledMap.TileFlag.FLIPPED_MASK)>>>0) >= tileset.firstGid) {
-                                    return tileset;
-                                }
-                            }
+    _buildWithMapInfo (mapInfo) {
+        this._mapInfo = mapInfo;
+        this._mapSize = mapInfo.getMapSize();
+        this._tileSize = mapInfo.getTileSize();
+        this._mapOrientation = mapInfo.orientation;
+        this._properties = mapInfo.properties;
+        this._tileProperties = mapInfo.getTileProperties();
+        this._imageLayers = mapInfo.getImageLayers();
+        this._animations = mapInfo.getTileAnimations();
+        this._tilesets = mapInfo.getTilesets();
 
-                        }
-                    }
-                }
-            }
+        let tilesets = this._tilesets;
+        this._textures.length = 0;
+
+        let totalTextures = [];
+        for (let i = 0, l = tilesets.length; i < l; ++i) {
+            let tilesetInfo = tilesets[i];
+            if (!tilesetInfo || !tilesetInfo.sourceImage) continue;
+            this._textures[i] = tilesetInfo.sourceImage;
+            totalTextures.push(tilesetInfo.sourceImage);
         }
 
-        // If all the tiles are 0, return empty tileset
-        cc.logID(7215, layerInfo.name);
-        return null;
-    }
+        for (let i = 0; i < this._imageLayers.length; i++) {
+            let imageLayer = this._imageLayers[i];
+            if (!imageLayer || !imageLayer.sourceImage) continue;
+            totalTextures.push(imageLayer.sourceImage);
+        }
+
+        cc.TiledMap.loadAllTextures (totalTextures, function () {
+            this._buildLayerAndGroup();
+        }.bind(this));
+    },
+
+    update (dt) {
+        let animations = this._animations;
+        let texGrids = this._texGrids;
+        for (let aniGID in animations) {
+            let animation = animations[aniGID];
+            let frames = animation.frames;
+            let frame = frames[animation.frameIdx];
+            animation.dt += dt;
+            if (frame.duration < animation.dt) {
+                animation.dt = 0;
+                animation.frameIdx++;
+                if (animation.frameIdx >= frames.length) {
+                    animation.frameIdx = 0;
+                }
+                frame = frames[animation.frameIdx];
+            }
+            texGrids[aniGID] = frame.grid;
+        }
+    },
 });
 
 cc.TiledMap = module.exports = TiledMap;
+
+cc.TiledMap.loadAllTextures = function (textures, loadedCallback) {
+    let totalNum = textures.length;
+    if (totalNum === 0) {
+        loadedCallback();
+        return;
+    }
+
+    let curNum = 0;
+    let itemCallback = function () {
+        curNum ++;
+        if (curNum >= totalNum) {
+            loadedCallback();
+        }
+    };
+
+    for (let i = 0; i < totalNum; i++) {
+        let tex = textures[i];
+        if (!tex.loaded) {
+            tex.once('load', function () {
+                itemCallback();
+            });
+        } else {
+            itemCallback();
+        }
+    }
+};
+
+cc.TiledMap.fillTextureGrids = function (tileset, texGrids, texId) {
+    let tex = tileset.sourceImage;
+
+    if (!tileset.imageSize.width || !tileset.imageSize.height) {
+        tileset.imageSize.width = tex.width;
+        tileset.imageSize.height = tex.height;
+    }
+
+    let tw = tileset._tileSize.width,
+        th = tileset._tileSize.height,
+        imageW = tex.width,
+        imageH = tex.height,
+        spacing = tileset.spacing,
+        margin = tileset.margin,
+
+        cols = Math.floor((imageW - margin*2 + spacing) / (tw + spacing)),
+        rows = Math.floor((imageH - margin*2 + spacing) / (th + spacing)),
+        count = rows * cols,
+
+        gid = tileset.firstGid,
+        grid = null,
+        override = texGrids[gid] ? true : false,
+        texelCorrect = cc.macro.FIX_ARTIFACTS_BY_STRECHING_TEXEL_TMX ? 0.5 : 0;
+
+    // Tiledmap may not be partitioned into blocks, resulting in a count value of 0
+    if (count <= 0) {
+        count = 1;
+    }
+
+    let maxGid = tileset.firstGid + count;
+    for (; gid < maxGid; ++gid) {
+        // Avoid overlapping
+        if (override && !texGrids[gid]) {
+            override = false;
+        }
+        if (!override && texGrids[gid]) {
+            break;
+        }
+
+        grid = {
+            // record texture id
+            texId: texId, 
+            // record belong to which tileset
+            tileset: tileset,
+            x: 0, y: 0, width: tw, height: th,
+            t: 0, l: 0, r: 0, b: 0,
+            gid: gid,
+        };
+        tileset.rectForGID(gid, grid);
+        grid.x += texelCorrect;
+        grid.y += texelCorrect;
+        grid.width -= texelCorrect*2;
+        grid.height -= texelCorrect*2;
+        grid.t = (grid.y) / imageH;
+        grid.l = (grid.x) / imageW;
+        grid.r = (grid.x + grid.width) / imageW;
+        grid.b = (grid.y + grid.height) / imageH;
+        texGrids[gid] = grid;
+    }
+};
+
 cc.js.obsolete(cc.TiledMap.prototype, 'cc.TiledMap.tmxFile', 'tmxAsset', true);
 cc.js.get(cc.TiledMap.prototype, 'mapLoaded', function () {
     cc.errorID(7203);

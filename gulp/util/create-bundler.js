@@ -3,6 +3,11 @@
 const Path = require('path');
 allowReturnOutsideFunctionInBrowserifyTransform();
 const Fs = require('fs');
+const Del = require('del');
+
+const dropPureExport = require('./drop-pure-export');
+const inlineProp = require('./inline-prop');
+const polyfillPromisify = require('./polyfill-node-promisify');
 
 const preludePath = Path.resolve(__dirname, '../browserify_prelude.js');
 const prelude = Fs.readFileSync(preludePath, 'utf8');
@@ -56,12 +61,18 @@ function allowReturnOutsideFunctionInBrowserifyTransform () {
  * @param [options.aliasifyConfig]
  */
 module.exports = function createBundler(entryFiles, options) {
+
+    // Ignore IDE compiled JavaScript files
+    Del.sync('./cocos2d/core/platform/deserialize-compiled.js');
+    Del.sync('./cocos2d/core/value-types/*.js');
+
     // https://github.com/substack/node-browserify#methods
     var browserifyOpt = {
+        extensions: ['.js', '.json', '.ts'],
         entries: [].concat(entryFiles),
         debug: (options && 'sourcemaps' in options) ? options.sourcemaps : true,
         detectGlobals: false,    // dont insert `process`, `global`, `__filename`, and `__dirname`
-        bundleExternal: false,   // dont bundle external modules
+        bundleExternal: !!(options && options.bundleExternal) || false,   // dont bundle external modules
         //standalone: 'engine-framework',
         //basedir: tempScriptDir
 
@@ -71,21 +82,44 @@ module.exports = function createBundler(entryFiles, options) {
     };
 
     var presets = [
-        // [ 'es2015', { loose: true } ],
-        'env'
+        [
+            require('@babel/preset-env'),
+            {
+                "loose": true,
+                // "bugfixes": true, since babel 7.9
+            }
+        ],
+        {
+            plugins: [
+                [
+                    require('@babel/plugin-proposal-decorators'),
+                    { legacy: true },
+                ],
+                [
+                    require('@babel/plugin-proposal-class-properties'),
+                    { loose: true },
+                ],
+            ]
+        },
+        [
+            require('@babel/preset-typescript'),
+            {
+                allowDeclareFields: true,
+            }
+        ],
     ];
 
-    // var plugins = [
-    //     // https://babeljs.io/docs/plugins/transform-es2015-shorthand-properties/
-    //     'babel-plugin-transform-es2015-shorthand-properties',
-    //     // https://babeljs.io/docs/plugins/transform-es2015-template-literals/
-    //     'babel-plugin-transform-es2015-template-literals',
-    //     // http://babeljs.io/docs/plugins/transform-es2015-block-scoping/
-    //     'babel-plugin-transform-es2015-block-scoping',
-
+    var plugins = [
     //     // < 6.16.0
     //     [ 'babel-plugin-parser-opts', { allowReturnOutsideFunction: true } ]
-    // ];
+        [
+            require('babel-plugin-const-enum'),
+            { transform: "constObject" },
+        ],
+        [
+            require('babel-plugin-add-module-exports'),
+        ],
+    ];
 
     var Babelify;
     try {
@@ -117,22 +151,32 @@ module.exports = function createBundler(entryFiles, options) {
         b = new Browserify(browserifyOpt);
     }
 
+    b = b.exclude(Path.join(__dirname, '../../package.json'));
+
+    if (browserifyOpt.bundleExternal) {
+        b = b.transform(polyfillPromisify);
+    }
+
     return b
-        .exclude(Path.join(__dirname, '../../package.json'))
+        .transform(dropPureExport)
+        .transform(inlineProp.inlineConst)
         .transform(Babelify, (options && options.babelifyOpt) || {
-            presets: presets,
-            // plugins: plugins,
+            extensions: ['.ts', '.js'],
+            presets: (options && options.presets) || presets,
+            plugins: (options && options.plugins && options.plugins.concat(plugins)) || plugins,
 
             // >= 6.16.0
             // parserOpts: {
             //     allowReturnOutsideFunction: true,
             // },
 
+            comments: true,
             ast: false,
             babelrc: false,
             highlightCode: false,
             sourceMaps: true,
             compact: false
         })
+        .transform(inlineProp.inlineEnum)
         .transform(aliasify, (options && options.aliasifyConfig) || {});
 };

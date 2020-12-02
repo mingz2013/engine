@@ -25,8 +25,6 @@
  THE SOFTWARE.
  ****************************************************************************/
 
-const js = require('./js');
-
 /**
  * Predefined constants
  * @class macro
@@ -255,21 +253,11 @@ cc.macro = {
      * !#en 
      * Whether or not enabled tiled map auto culling. If you set the TiledMap skew or rotation, then need to manually disable this, otherwise, the rendering will be wrong.
      * !#zh
-     * 是否开启瓦片地图的自动裁减功能。瓦片地图如果设置了 skew, rotation 的话，需要手动关闭，否则渲染会出错。
+     * 是否开启瓦片地图的自动裁减功能。瓦片地图如果设置了 skew, rotation 或者采用了摄像机的话，需要手动关闭，否则渲染会出错。
      * @property {Boolean} ENABLE_TILEDMAP_CULLING
      * @default true
      */
     ENABLE_TILEDMAP_CULLING: true,
-
-    /**
-     * !#en 
-     * The max concurrent task number for the downloader
-     * !#zh
-     * 下载任务的最大并发数限制，在安卓平台部分机型或版本上可能需要限制在较低的水平
-     * @property {Number} DOWNLOAD_MAX_CONCURRENT
-     * @default 64
-     */
-    DOWNLOAD_MAX_CONCURRENT: 64,
 
     /**
      * !#en 
@@ -328,15 +316,13 @@ cc.macro = {
 
     /**
      * !#en
-     * Whether or not clear dom Image object cache after uploading to gl texture.
-     * Concretely, we are setting image.src to empty string to release the cache.
-     * Normally you don't need to enable this option, because on web the Image object doesn't consume too much memory.
-     * But on Wechat Game platform, the current version cache decoded data in Image object, which has high memory usage.
-     * So we enabled this option by default on Wechat, so that we can release Image cache immediately after uploaded to GPU.
+     * Whether to clear the original image cache after uploaded a texture to GPU. If cleared, [Dynamic Atlas](https://docs.cocos.com/creator/manual/en/advanced-topics/dynamic-atlas.html) will not be supported.
+     * Normally you don't need to enable this option on the web platform, because Image object doesn't consume too much memory.
+     * But on WeChat Game platform, the current version cache decoded data in Image object, which has high memory usage.
+     * So we enabled this option by default on WeChat, so that we can release Image cache immediately after uploaded to GPU.
      * !#zh
-     * 是否在将贴图上传至 GPU 之后删除 DOM Image 缓存。
-     * 具体来说，我们通过设置 image.src 为空字符串来释放这部分内存。
-     * 正常情况下，你不需要开启这个选项，因为在 web 平台，Image 对象所占用的内存很小。
+     * 是否在将贴图上传至 GPU 之后删除原始图片缓存，删除之后图片将无法进行 [动态合图](https://docs.cocos.com/creator/manual/zh/advanced-topics/dynamic-atlas.html)。
+     * 在 Web 平台，你通常不需要开启这个选项，因为在 Web 平台 Image 对象所占用的内存很小。
      * 但是在微信小游戏平台的当前版本，Image 对象会缓存解码后的图片数据，它所占用的内存空间很大。
      * 所以我们在微信平台默认开启了这个选项，这样我们就可以在上传 GL 贴图之后立即释放 Image 对象的内存，避免过高的内存占用。
      * @property {Boolean} CLEANUP_IMAGE_CACHE
@@ -353,27 +339,75 @@ cc.macro = {
      * @default false
      */
     SHOW_MESH_WIREFRAME: false,
+
+    /**
+     * !#en
+     * Whether or not show mesh normal.
+     * !#zh
+     * 是否显示网格的法线。
+     * @property {Boolean} SHOW_MESH_NORMAL
+     * @default false
+     */
+    SHOW_MESH_NORMAL: false,
+
+    /**
+     * !#en
+     * Whether to enable multi-touch.
+     * !#zh
+     * 是否开启多点触摸
+     * @property {Boolean} ENABLE_MULTI_TOUCH
+     * @default true
+     */
+    ENABLE_MULTI_TOUCH: true,
+
+    /**
+     * References: 
+     * https://developer.mozilla.org/en-US/docs/Web/API/ImageBitmap
+     * https://developer.mozilla.org/en-US/docs/Web/API/WindowOrWorkerGlobalScope/createImageBitmap
+     * 
+     * !#en
+     * Whether to use image bitmap first. If enabled, memory usage will increase.
+     * 
+     * !#zh
+     * 是否优先使用 image bitmap，启用之后，内存占用会变高
+     * 
+     * @property {Boolean} ALLOW_IMAGE_BITMAP
+     * @default true
+     */
+    ALLOW_IMAGE_BITMAP: !cc.sys.isMobile,
+
+    /**
+     * !#en
+     * Whether to use native TTF renderer which is faster but layout slightly different.
+     * 
+     * !#zh
+     * 是否使用原生的文本渲染机制, 布局和编辑器有差异.
+     * 
+     * @property {Boolean} ENABLE_NATIVE_TTF_RENDERER
+     * @default true
+     */
+    ENABLE_NATIVE_TTF_RENDERER: true
+
 };
 
-
-let SUPPORT_TEXTURE_FORMATS = ['.webp', '.jpg', '.jpeg', '.bmp', '.png'];
-if (cc.sys.isMobile) {
-    if (cc.sys.os === cc.sys.OS_IOS) {
-        SUPPORT_TEXTURE_FORMATS = ['.pvr'].concat(SUPPORT_TEXTURE_FORMATS);
+Object.defineProperty(cc.macro, 'ROTATE_ACTION_CCW', {
+    set (value) {
+        if (cc.RotateTo && cc.RotateBy) {
+            cc.RotateTo._reverse = cc.RotateBy._reverse = value;
+        }
     }
-    // else if (cc.sys.os === cc.sys.OS_ANDROID) {
-    //     SUPPORT_TEXTURE_FORMATS = ['.etc'].join(SUPPORT_TEXTURE_FORMATS);
-    // }
-}
+});
+
+let SUPPORT_TEXTURE_FORMATS = ['.pkm', '.pvr', '.webp', '.jpg', '.jpeg', '.bmp', '.png'];
 
 /**
- * !en
+ * !#en
  * The image format supported by the engine defaults, and the supported formats may differ in different build platforms and device types.
  * Currently all platform and device support ['.webp', '.jpg', '.jpeg', '.bmp', '.png'], The iOS mobile platform also supports the PVR format。
- * !zh
+ * !#zh
  * 引擎默认支持的图片格式，支持的格式可能在不同的构建平台和设备类型上有所差别。
  * 目前所有平台和设备支持的格式有 ['.webp', '.jpg', '.jpeg', '.bmp', '.png']. 另外 Ios 手机平台还额外支持了 PVR 格式。
- * @property {[String]} SUPPORT_TEXTURE_FORMATS
+ * @property {String[]} SUPPORT_TEXTURE_FORMATS
  */
 cc.macro.SUPPORT_TEXTURE_FORMATS = SUPPORT_TEXTURE_FORMATS;
 

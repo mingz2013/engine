@@ -182,23 +182,37 @@ cc.ActionManager.prototype = {
      */
     removeAction:function (action) {
         // explicit null handling
-        if (action == null)
+        if (!action) {
             return;
+        }
         var target = action.getOriginalTarget();
         var element = this._hashTargets[target._id];
 
-        if (element) {
-            for (var i = 0; i < element.actions.length; i++) {
-                if (element.actions[i] === action) {
-                    element.actions.splice(i, 1);
-                    // update actionIndex in case we are in tick. looping over the actions
-                    if (element.actionIndex >= i)
-                        element.actionIndex--;
-                    break;
-                }
+        if (!element) {
+            return;
+        }
+
+        for (var i = 0; i < element.actions.length; i++) {
+            if (element.actions[i] === action) {
+                element.actions.splice(i, 1);
+                // update actionIndex in case we are in tick. looping over the actions
+                if (element.actionIndex >= i)
+                    element.actionIndex--;
+                break;
             }
-        } else {
-            cc.logID(1001);
+        }
+    },
+
+    _removeActionByTag (tag, element, target) {
+        for (var i = 0, l = element.actions.length; i < l; ++i) {
+            var action = element.actions[i];
+            if (action && action.getTag() === tag) {
+                if (target && action.getOriginalTarget() !== target) {
+                    continue;
+                }
+                this._removeActionAtIndex(i, element);
+                break;
+            }
         }
     },
 
@@ -207,24 +221,23 @@ cc.ActionManager.prototype = {
      * !#zh 删除指定对象下特定标签的一个动作，将删除首个匹配到的动作。
      * @method removeActionByTag
      * @param {Number} tag
-     * @param {Node} target
+     * @param {Node} [target]
      */
     removeActionByTag:function (tag, target) {
         if(tag === cc.Action.TAG_INVALID)
             cc.logID(1002);
 
-        cc.assertID(target, 1003);
-
-        var element = this._hashTargets[target._id];
-
-        if (element) {
-            var limit = element.actions.length;
-            for (var i = 0; i < limit; ++i) {
-                var action = element.actions[i];
-                if (action && action.getTag() === tag && action.getOriginalTarget() === target) {
-                    this._removeActionAtIndex(i, element);
-                    break;
-                }
+        let hashTargets = this._hashTargets;
+        if (target) {
+            var element = hashTargets[target._id];
+            if (element) {
+                this._removeActionByTag(tag, element, target);
+            }
+        }
+        else {
+            for (let name in hashTargets) {
+                let element = hashTargets[name];
+                this._removeActionByTag(tag, element);
             }
         }
     },

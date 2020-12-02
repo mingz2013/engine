@@ -100,6 +100,7 @@ var PageView = cc.Class({
         this._curPageIdx = 0;
         this._lastPageIdx = 0;
         this._pages = [];
+        this._initContentPos = cc.v2();
         this._scrollCenterOffsetX = []; // 每一个页面居中时需要的偏移量（X）
         this._scrollCenterOffsetY = []; // 每一个页面居中时需要的偏移量（Y）
     },
@@ -223,12 +224,9 @@ var PageView = cc.Class({
         EventType: EventType
     },
 
-    __preload: function () {
-        this.node.on(cc.Node.EventType.SIZE_CHANGED, this._updateAllPagesSize, this);
-    },
-
     onEnable: function () {
         this._super();
+        this.node.on(cc.Node.EventType.SIZE_CHANGED, this._updateAllPagesSize, this);
         if(!CC_EDITOR) {
             this.node.on('scroll-ended-with-threshold', this._dispatchPageTurningEvent, this);
         }
@@ -236,6 +234,7 @@ var PageView = cc.Class({
 
     onDisable: function () {
         this._super();
+        this.node.off(cc.Node.EventType.SIZE_CHANGED, this._updateAllPagesSize, this);
         if(!CC_EDITOR) {
             this.node.off('scroll-ended-with-threshold', this._dispatchPageTurningEvent, this);
         }
@@ -246,10 +245,6 @@ var PageView = cc.Class({
         if (this.indicator) {
             this.indicator.setPageView(this);
         }
-    },
-
-    onDestroy: function() {
-        this.node.off(cc.Node.EventType.SIZE_CHANGED, this._updateAllPagesSize, this);
     },
 
     /**
@@ -394,20 +389,15 @@ var PageView = cc.Class({
         if (!this.content) { return; }
         var layout = this.content.getComponent(cc.Layout);
         if (layout) {
-            if (this._pages.length === 0) {
-                layout.padding = 0;
-            }
-            else {
+            if (this.sizeMode === SizeMode.Free && this._pages.length > 0) {
                 var lastPage = this._pages[this._pages.length - 1];
-                if (this.sizeMode === SizeMode.Free) {
-                    if (this.direction === Direction.Horizontal) {
-                        layout.paddingLeft = (this._view.width - this._pages[0].width) / 2;
-                        layout.paddingRight = (this._view.width - lastPage.width) / 2;
-                    }
-                    else if (this.direction === Direction.Vertical) {
-                        layout.paddingTop = (this._view.height - this._pages[0].height) / 2;
-                        layout.paddingBottom = (this._view.height - lastPage.height) / 2;
-                    }
+                if (this.direction === Direction.Horizontal) {
+                    layout.paddingLeft = (this._view.width - this._pages[0].width) / 2;
+                    layout.paddingRight = (this._view.width - lastPage.width) / 2;
+                }
+                else if (this.direction === Direction.Vertical) {
+                    layout.paddingTop = (this._view.height - this._pages[0].height) / 2;
+                    layout.paddingBottom = (this._view.height - lastPage.height) / 2;
                 }
             }
             layout.updateLayout();
@@ -416,6 +406,12 @@ var PageView = cc.Class({
 
     // 刷新页面视图
     _updatePageView: function () {
+        // 当页面数组变化时修改 content 大小
+        var layout = this.content.getComponent(cc.Layout);
+        if (layout && layout.enabled) {
+            layout.updateLayout();
+        }
+
         var pageCount = this._pages.length;
 
         if (this._curPageIdx >= pageCount) {
@@ -423,22 +419,18 @@ var PageView = cc.Class({
             this._lastPageIdx = this._curPageIdx;
         }
         // 进行排序
+        var contentPos = this._initContentPos;
         for (var i = 0; i < pageCount; ++i) {
-            this._pages[i].setSiblingIndex(i);
+            var page = this._pages[i];
+            page.setSiblingIndex(i);
             if (this.direction === Direction.Horizontal) {
-                this._scrollCenterOffsetX[i] = Math.abs(this.content.x + this._pages[i].x);
+                this._scrollCenterOffsetX[i] = Math.abs(contentPos.x + page.x);
             }
             else {
-                this._scrollCenterOffsetY[i] = Math.abs(this.content.y + this._pages[i].y);
+                this._scrollCenterOffsetY[i] = Math.abs(contentPos.y + page.y);
             }
         }
 
-        // 当页面数组变化时修改 content 大小
-        var layout = this.content.getComponent(cc.Layout);
-        if (layout && layout.enabled) {
-            layout.updateLayout();
-        }
-        
         // 刷新 indicator 信息与状态
         if (this.indicator) {
             this.indicator._refresh();
@@ -447,7 +439,7 @@ var PageView = cc.Class({
 
     // 刷新所有页面的大小
     _updateAllPagesSize: function () {
-        if (this.sizeMode !== SizeMode.Unified) {
+        if (this.sizeMode !== SizeMode.Unified || !this._view) {
             return;
         }
         var locPages = CC_EDITOR ? this.content.children : this._pages;
@@ -460,6 +452,7 @@ var PageView = cc.Class({
     // 初始化页面
     _initPages: function () {
         if (!this.content) { return; }
+        this._initContentPos = this.content.position;
         var children = this.content.children;
         for (var i = 0; i < children.length; ++i) {
             var page = children[i];
@@ -561,25 +554,25 @@ var PageView = cc.Class({
             }
         }
     },
+
     _autoScrollToPage: function () {
         var bounceBackStarted = this._startBounceBackIfNeeded();
-        var moveOffset = this._touchBeganPosition.sub(this._touchEndPosition);
         if (bounceBackStarted) {
-            var dragDirection = this._getDragDirection(moveOffset);
-            if (dragDirection === 0) {
-                return;
+            let bounceBackAmount = this._getHowMuchOutOfBoundary();
+            bounceBackAmount = this._clampDelta(bounceBackAmount);
+            if (bounceBackAmount.x > 0 || bounceBackAmount.y < 0) {
+                this._curPageIdx = this._pages.length === 0 ? 0 : this._pages.length - 1;
             }
-            if (dragDirection > 0) {
-                this._curPageIdx = this._pages.length - 1;
-            }
-            else {
+            if (bounceBackAmount.x < 0 || bounceBackAmount.y > 0) {
                 this._curPageIdx = 0;
             }
+
             if (this.indicator) {
                 this.indicator._changedState();
             }
         }
         else {
+            var moveOffset = this._touchBeganPosition.sub(this._touchEndPosition);
             var index = this._curPageIdx, nextIndex = index + this._getDragDirection(moveOffset);
             var timeInSecond = this.pageTurningSpeed * Math.abs(index - nextIndex);
             if (nextIndex < this._pages.length) {

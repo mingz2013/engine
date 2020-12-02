@@ -26,6 +26,7 @@
 /**
  * @module sp
  */
+let SkeletonCache = !CC_JSB && require('./skeleton-cache').sharedCache;
 
 /**
  * !#en The skeleton data of spine.
@@ -33,7 +34,7 @@
  * @class SkeletonData
  * @extends Asset
  */
-var SkeletonData = cc.Class({
+let SkeletonData = cc.Class({
     name: 'sp.SkeletonData',
     extends: cc.Asset,
 
@@ -42,8 +43,18 @@ var SkeletonData = cc.Class({
     },
 
     properties: {
-
         _skeletonJson: null,
+
+        // use by jsb
+        skeletonJsonStr: {
+            get: function () {
+                if (this._skeletonJson) {
+                    return JSON.stringify(this._skeletonJson);
+                } else {
+                    return "";
+                }
+            }
+        },
 
         /**
          * !#en See http://en.esotericsoftware.com/spine-json-format
@@ -55,8 +66,16 @@ var SkeletonData = cc.Class({
                 return this._skeletonJson;
             },
             set: function (value) {
-                this._skeletonJson = value;
                 this.reset();
+                if (typeof(value) == "string") {
+                    this._skeletonJson = JSON.parse(value);
+                } else {
+                    this._skeletonJson = value;
+                }
+                // If create by manual, uuid is empty.
+                if (!this._uuid && value.skeleton) {
+                    this._uuid = value.skeleton.hash;
+                }
             }
         },
 
@@ -104,19 +123,29 @@ var SkeletonData = cc.Class({
          * !#zh 可查看 Spine 官方文档： http://zh.esotericsoftware.com/spine-using-runtimes#Scaling
          * @property {Number} scale
          */
-        scale: 1
+        scale: 1,
+
+        _nativeAsset: {
+            get () {
+                return this._buffer;
+            },
+            set (bin) {
+                this._buffer = bin.buffer || bin;
+                this.reset();
+            },
+            override: true
+        },
     },
 
     statics: {
         preventDeferredLoadDependents: true,
-        preventPreloadNativeObject: true,
     },
 
     // PUBLIC
 
     createNode: CC_EDITOR && function (callback) {
-        var node = new cc.Node(this.name);
-        var skeleton = node.addComponent(sp.Skeleton);
+        let node = new cc.Node(this.name);
+        let skeleton = node.addComponent(sp.Skeleton);
         skeleton.skeletonData = this;
 
         return callback(null, node);
@@ -137,6 +166,43 @@ var SkeletonData = cc.Class({
             this._skinsEnum = null;
             this._animsEnum = null;
         }
+    },
+
+    ensureTexturesLoaded (loaded, caller) {
+        let textures = this.textures; 
+        let texsLen = textures.length;
+        if (texsLen == 0) {
+            loaded.call(caller, false);
+            return;
+        }
+        let loadedCount = 0;
+        let loadedItem = function () {
+            loadedCount++;
+            if (loadedCount >= texsLen) {
+                loaded && loaded.call(caller, true);
+                loaded = null;
+            }
+        }
+        for (let i = 0; i < texsLen; i++) {
+            let tex = textures[i];
+            if (tex.loaded) {
+                loadedItem();
+            } else {
+                tex.once('load', loadedItem);
+            }
+        }
+    },
+
+    isTexturesLoaded () {
+        let textures = this.textures; 
+        let texsLen = textures.length;
+        for (let i = 0; i < texsLen; i++) {
+            let tex = textures[i];
+            if (!tex.loaded) {
+                return false;
+            }
+        }
+        return true;
     },
 
     /**
@@ -160,17 +226,25 @@ var SkeletonData = cc.Class({
             return null;
         }
 
-        var atlas = this._getAtlas(quiet);
+        let atlas = this._getAtlas(quiet);
         if (! atlas) {
             return null;
         }
-        var attachmentLoader = new sp.spine.AtlasAttachmentLoader(atlas);
-        var jsonReader = new sp.spine.SkeletonJson(attachmentLoader);
-        jsonReader.scale = this.scale;
+        let attachmentLoader = new sp.spine.AtlasAttachmentLoader(atlas);
 
-        var json = this.skeletonJson;
-        this._skeletonCache = jsonReader.readSkeletonData(json);
-        atlas.dispose(jsonReader);
+        let resData = null;
+        let reader = null;
+        if (this.skeletonJson) {
+            reader = new sp.spine.SkeletonJson(attachmentLoader);
+            resData = this.skeletonJson;
+        } else {
+            reader = new sp.spine.SkeletonBinary(attachmentLoader);
+            resData = new Uint8Array(this._nativeAsset);
+        }
+
+        reader.scale = this.scale;
+        this._skeletonCache = reader.readSkeletonData(resData);
+        atlas.dispose();
 
         return this._skeletonCache;
     },
@@ -181,12 +255,12 @@ var SkeletonData = cc.Class({
         if (this._skinsEnum) {
             return this._skinsEnum;
         }
-        var sd = this.getRuntimeData(true);
+        let sd = this.getRuntimeData(true);
         if (sd) {
-            var skins = sd.skins;
-            var enumDef = {};
-            for (var i = 0; i < skins.length; i++) {
-                var name = skins[i].name;
+            let skins = sd.skins;
+            let enumDef = {};
+            for (let i = 0; i < skins.length; i++) {
+                let name = skins[i].name;
                 enumDef[name] = i;
             }
             return this._skinsEnum = cc.Enum(enumDef);
@@ -198,12 +272,12 @@ var SkeletonData = cc.Class({
         if (this._animsEnum) {
             return this._animsEnum;
         }
-        var sd = this.getRuntimeData(true);
+        let sd = this.getRuntimeData(true);
         if (sd) {
-            var enumDef = { '<None>': 0 };
-            var anims = sd.animations;
-            for (var i = 0; i < anims.length; i++) {
-                var name = anims[i].name;
+            let enumDef = { '<None>': 0 };
+            let anims = sd.animations;
+            for (let i = 0; i < anims.length; i++) {
+                let name = anims[i].name;
                 enumDef[name] = i + 1;
             }
             return this._animsEnum = cc.Enum(enumDef);
@@ -214,11 +288,11 @@ var SkeletonData = cc.Class({
     // PRIVATE
 
     _getTexture: function (line) {
-        var names = this.textureNames;
-        for (var i = 0; i < names.length; i++) {
+        let names = this.textureNames;
+        for (let i = 0; i < names.length; i++) {
             if (names[i] === line) {
-                var texture = this.textures[i];
-                var tex = new sp.SkeletonTexture({ width: texture.width, height: texture.height });
+                let texture = this.textures[i];
+                let tex = new sp.SkeletonTexture({ width: texture.width, height: texture.height });
                 tex.setRealTexture(texture);
                 return tex;
             }
@@ -246,7 +320,12 @@ var SkeletonData = cc.Class({
         }
 
         return this._atlasCache = new sp.spine.TextureAtlas(this.atlasText, this._getTexture.bind(this));
-    }
+    },
+
+    destroy () {
+        SkeletonCache.removeSkeleton(this._uuid);
+        this._super();
+    },
 });
 
 sp.SkeletonData = module.exports = SkeletonData;

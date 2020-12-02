@@ -23,13 +23,15 @@
  THE SOFTWARE.
  ****************************************************************************/
 
+import Assembler from '../renderer/assembler';
+import MaterialVariant from '../assets/material/material-variant';
+import { Color } from '../value-types';
+
 const Component = require('./CCComponent');
-const renderEngine = require('../renderer/render-engine');
 const RenderFlow = require('../renderer/render-flow');
-const BlendFactor = require('../platform/CCMacro').BlendFactor;
-const RenderData = renderEngine.RenderData;
-const gfx = renderEngine.gfx;
-const Material = require('../assets/CCMaterial');
+const Material = require('../assets/material/CCMaterial');
+
+let _temp_color = new Color();
 
 /**
  * !#en
@@ -50,78 +52,44 @@ let RenderComponent = cc.Class({
     },
 
     properties: {
-        _srcBlendFactor: BlendFactor.SRC_ALPHA,
-        _dstBlendFactor: BlendFactor.ONE_MINUS_SRC_ALPHA,
-
-          /**
-         * !#en specify the source Blend Factor, this will generate a custom material object, please pay attention to the memory cost.
-         * !#zh 指定原图的混合模式，这会克隆一个新的材质对象，注意这带来的
-         * @property srcBlendFactor
-         * @type {macro.BlendFactor}
-         * @example
-         * sprite.srcBlendFactor = cc.macro.BlendFactor.ONE;
-         */
-        srcBlendFactor: {
-            get: function() {
-                return this._srcBlendFactor;
-            },
-            set: function(value) {
-                if (this._srcBlendFactor === value) return;
-                this._srcBlendFactor = value;
-                this._updateBlendFunc(true);
-            },
-            animatable: false,
-            type:BlendFactor,
-            tooltip: CC_DEV && 'i18n:COMPONENT.sprite.src_blend_factor'
-        },
-
-        /**
-         * !#en specify the destination Blend Factor.
-         * !#zh 指定目标的混合模式
-         * @property dstBlendFactor
-         * @type {macro.BlendFactor}
-         * @example
-         * sprite.dstBlendFactor = cc.macro.BlendFactor.ONE;
-         */
-        dstBlendFactor: {
-            get: function() {
-                return this._dstBlendFactor;
-            },
-            set: function(value) {
-                if (this._dstBlendFactor === value) return;
-                this._dstBlendFactor = value;
-                this._updateBlendFunc(true);
-            },
-            animatable: false,
-            type: BlendFactor,
-            tooltip: CC_DEV && 'i18n:COMPONENT.sprite.dst_blend_factor'
-        },
-
         _materials: {
             default: [],
             type: Material,
         },
 
-        sharedMaterials: {
+        /**
+         * !#en The materials used by this render component.
+         * !#zh 渲染组件使用的材质。
+         * @property {[Material]} sharedMaterials
+         */
+        materials: {
             get () {
                 return this._materials;
             },
             set (val) {
                 this._materials = val;
-                this._activateMaterial(true);
+                this._activateMaterial();
             },
             type: [Material],
-            displayName: 'Materials'
+            displayName: 'Materials',
+            animatable: false
         }
     },
     
     ctor () {
-        this._renderData = null;
-        this.__allocedDatas = [];
-        this._vertexFormat = null;
-        this._toPostHandle = false;
-        this._assembler = this.constructor._assembler;
-        this._postAssembler = this.constructor._postAssembler;
+        this._vertsDirty = true;
+        this._assembler = null;
+    },
+
+    _resetAssembler () {
+        Assembler.init(this);
+        this._updateColor();
+        this.setVertsDirty();
+    },
+
+    __preload () {
+        this._resetAssembler();
+        this._activateMaterial();
     },
 
     onEnable () {
@@ -129,7 +97,9 @@ let RenderComponent = cc.Class({
             this.node._renderComponent.enabled = false;
         }
         this.node._renderComponent = this;
-        this.node._renderFlag |= RenderFlow.FLAG_RENDER | RenderFlow.FLAG_UPDATE_RENDER_DATA | RenderFlow.FLAG_COLOR;
+        this.node._renderFlag |= RenderFlow.FLAG_OPACITY_COLOR;
+        
+        this.setVertsDirty();
     },
 
     onDisable () {
@@ -138,81 +108,53 @@ let RenderComponent = cc.Class({
     },
 
     onDestroy () {
-        for (let i = 0, l = this.__allocedDatas.length; i < l; i++) {
-            RenderData.free(this.__allocedDatas[i]);
+        let materials = this._materials;
+        for (let i = 0; i < materials.length; i++) {
+            cc.pool.material.put(materials[i]);
         }
-        this.__allocedDatas.length = 0;
-        this._materials.length = 0;
-        this._renderData = null;
-    },
-    
-    _canRender () {
-        // When the node is activated, it will execute onEnable and the renderflag will also be reset.
-        return this._enabled && this.node._activeInHierarchy;
+        materials.length = 0;
+
+        cc.pool.assembler.put(this._assembler);
     },
 
-    markForUpdateRenderData (enable) {
-        if (enable && this._canRender()) {
-            this.node._renderFlag |= RenderFlow.FLAG_UPDATE_RENDER_DATA;
-        }
-        else if (!enable) {
-            this.node._renderFlag &= ~RenderFlow.FLAG_UPDATE_RENDER_DATA;
-        }
+    setVertsDirty () {
+        this._vertsDirty = true;
+        this.markForRender(true);
+    },
+
+    _on3DNodeChanged () {
+        this._resetAssembler();
+    },
+    
+    _validateRender () {
+    },
+
+    markForValidate () {
+        cc.RenderFlow.registerValidate(this);
     },
 
     markForRender (enable) {
-        if (enable && this._canRender()) {
-            this.node._renderFlag |= RenderFlow.FLAG_RENDER;
+        let flag = RenderFlow.FLAG_RENDER | RenderFlow.FLAG_UPDATE_RENDER_DATA;
+        if (enable) {
+            this.node._renderFlag |= flag;
+            this.markForValidate();
         }
-        else if (!enable) {
-            this.node._renderFlag &= ~RenderFlow.FLAG_RENDER;
-        }
-    },
-
-    markForCustomIARender (enable) {
-        if (enable && this._canRender()) {
-            this.node._renderFlag |= RenderFlow.FLAG_CUSTOM_IA_RENDER;
-        }
-        else if (!enable) {
-            this.node._renderFlag &= ~RenderFlow.FLAG_CUSTOM_IA_RENDER;
+        else {
+            this.node._renderFlag &= ~flag;
         }
     },
 
     disableRender () {
-        this.node._renderFlag &= ~(RenderFlow.FLAG_RENDER | RenderFlow.FLAG_CUSTOM_IA_RENDER | RenderFlow.FLAG_UPDATE_RENDER_DATA | RenderFlow.FLAG_COLOR);
+        this.node._renderFlag &= ~(RenderFlow.FLAG_RENDER | RenderFlow.FLAG_UPDATE_RENDER_DATA);
     },
 
-    requestRenderData () {
-        let data = RenderData.alloc();
-        this.__allocedDatas.push(data);
-        return data;
-    },
-
-    destroyRenderData (data) {
-        let index = this.__allocedDatas.indexOf(data);
-        if (index !== -1) {
-            this.__allocedDatas.splice(index, 1);
-            RenderData.free(data);
-        }
-    },
-
-    _updateColor () {
-        let materials = this._materials;
-        for (let i = 0; i < materials.length; i++) {
-            let material = materials[i];
-            // For batch rendering, update the color only when useColor is set to true.
-            if (material.getDefine('useColor')) {
-                material.setProperty('color', this.node.color);
-                material.updateHash();
-            }
-        }
-        // reset flag when set color to material successfully
-        this.node._renderFlag &= ~RenderFlow.FLAG_COLOR;
-    },
-
-    getMaterials () {
-        return this._materials;
-    },
+    /**
+     * !#en Get the material by index.
+     * !#zh 根据指定索引获取材质
+     * @method getMaterial
+     * @param {Number} index 
+     * @return {MaterialVariant}
+     */
     getMaterial (index) {
         if (index < 0 || index >= this._materials.length) {
             return null;
@@ -221,51 +163,94 @@ let RenderComponent = cc.Class({
         let material = this._materials[index];
         if (!material) return null;
         
-        let instantiated = Material.getInstantiatedMaterial(material, this);
+        let instantiated = MaterialVariant.create(material, this);
         if (instantiated !== material) {
             this.setMaterial(index, instantiated);
         }
 
-        return this._materials[index];
-    },
-    setMaterial (index, material) {
-        this._materials[index] = material;
-        if (material) {
-            this._updateMaterialBlendFunc(true, material);
-        }
-        this.markForUpdateRenderData(true);
+        return instantiated;
     },
 
-    _updateBlendFunc: function (updateHash) {
+    /**
+     * !#en Gets all the materials.
+     * !#zh 获取所有材质。
+     * @method getMaterials
+     * @return {[MaterialVariant]}
+     */
+    getMaterials () {
         let materials = this._materials;
         for (let i = 0; i < materials.length; i++) {
-            let material = materials[i];
-            this._updateMaterialBlendFunc(updateHash, material);
+            materials[i] = MaterialVariant.create(materials[i], this);
+        }
+        return materials;
+    },
+    
+    /**
+     * !#en Set the material by index.
+     * !#zh 根据指定索引设置材质
+     * @method setMaterial
+     * @param {Number} index 
+     * @param {Material} material
+     * @return {Material}
+     */
+    setMaterial (index, material) {
+        if (material !== this._materials[index]) {
+            material = MaterialVariant.create(material, this);
+            this._materials[index] = material;
+        }
+        this._updateMaterial();
+        this.markForRender(true);
+        return material;
+    },
+
+    _getDefaultMaterial () {
+        return Material.getBuiltinMaterial('2d-sprite');
+    },
+
+    /**
+     * Init material.
+     */
+    _activateMaterial () {
+        let materials = this._materials;
+        if (!materials[0]) {
+            let material = this._getDefaultMaterial();
+            materials[0] = material;
+        }
+
+        for (let i = 0; i < materials.length; i++) {
+            materials[i] = MaterialVariant.create(materials[i], this);
+        }
+
+        this._updateMaterial();
+    },
+
+    /**
+     * Update material properties.
+     */
+    _updateMaterial () {
+
+    },
+
+    _updateColor () {
+        if (this._assembler.updateColor) {
+            let premultiply = this.srcBlendFactor === cc.macro.BlendFactor.ONE;
+            premultiply && Color.premultiplyAlpha(_temp_color, this.node._color);
+            let color = premultiply ? _temp_color._val : null;
+            this._assembler.updateColor(this, color);
         }
     },
 
-    _updateMaterialBlendFunc (updateHash, material) {
-        let passes = material._effect.getTechnique('transparent').passes;
-        for (let j = 0; j < passes.length; j++) {
-            let pass = passes[j];
-            pass.setBlend(
-                true,
-                gfx.BLEND_FUNC_ADD,
-                this._srcBlendFactor, this._dstBlendFactor,
-                gfx.BLEND_FUNC_ADD,
-                this._srcBlendFactor, this._dstBlendFactor
-            );
+    _checkBacth (renderer, cullingMask) {
+        let material = this._materials[0];
+        if ((material && material.getHash() !== renderer.material.getHash()) || 
+            renderer.cullingMask !== cullingMask) {
+            renderer._flush();
+    
+            renderer.node = material.getDefine('CC_USE_MODEL') ? this.node : renderer._dummyNode;
+            renderer.material = material;
+            renderer.cullingMask = cullingMask;
         }
-
-        if (updateHash) {
-            material.updateHash();
-        }
-    },
-
-    _activateMaterial (force) {
     }
 });
-RenderComponent._assembler = null;
-RenderComponent._postAssembler = null;
 
 cc.RenderComponent = module.exports = RenderComponent;

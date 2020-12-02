@@ -283,6 +283,16 @@
         cc.js.unregisterClass(Vec3);
     });
 
+    test('Root is TypedArray', function () {
+        var trs = new Float64Array(10);
+        var expect = {
+            __type__: 'TypedArray',
+            ctor: 'Float64Array',
+            array: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        };
+        match(trs, expect);
+    });
+
     test('test asset property', function () {
         var sprite = new TestSprite();
         sprite.texture = new TestTexture();
@@ -420,47 +430,6 @@
         deepEqual(data, expected, 'nicify success');
     });
 
-    test('url array', function () {
-        var Data = cc.Class({
-            name: 'data',
-            properties: {
-                textures: {
-                    default: [],
-                    url: [cc.Texture2D]
-                }
-            }
-        });
-        var restore = Editor.Utils.UuidCache.urlToUuid;
-        Editor.Utils.UuidCache.urlToUuid = function (url) {
-            return {
-                foo: '01',
-                bar: '02'
-            }[url];
-        };
-
-        var data = new Data();
-        data.textures = ['foo', 'bar'];
-
-        var actual = JSON.parse(Editor.serialize(data));
-        strictEqual(actual.image, undefined, 'should not serialize variable which not defined by property');
-
-        var expected = {
-            __type__: 'data',
-            textures: [
-                {
-                    __uuid__: '01'
-                },
-                {
-                    __uuid__: '02'
-                }
-            ]
-        };
-        deepEqual(actual, expected, 'could be serialized');
-
-        Editor.Utils.UuidCache.urlToUuid = restore;
-        cc.js.unregisterClass(Data);
-    });
-
     test('node array', function () {
         var Data = cc.Class({
             name: 'data',
@@ -528,4 +497,52 @@
 
         cc.js.unregisterClass(MyAsset);
     });
+
+    test('eliminate default property', function () {
+        var MyAsset = cc.Class({
+            name: 'MyAsset',
+            properties: {
+                scale0: cc.v3(0, 0, 0),
+                scale1: cc.v3(1, 1, 1),
+                scale00: cc.v3(0, 1, 0),
+                scale01: cc.v3(0, 0, 0),
+                scale10: cc.v3(1, 1, 1),
+            }
+        });
+        var asset = new MyAsset();
+        asset.scale00.y = 0;
+        asset.scale01.y = 1;
+        asset.scale10.y = 0;
+
+        var expectedDefaultScaleResult = {
+            __type__: 'MyAsset',
+            scale00: {
+                __type__: "cc.Vec3",
+            },
+            scale01: {
+                __type__: 'cc.Vec3',
+                y: 1,
+            },
+            scale10: {
+                __type__: 'cc.Vec3',
+                x: 1,
+                z: 1,
+            },
+        };
+
+        var actualDefaultScaled = JSON.parse(Editor.serialize(asset, { exporting: true, dontStripDefault: false }));
+
+        // to read default value from ValueType instead of constructor of user class
+        deepEqual(actualDefaultScaled.scale00, expectedDefaultScaleResult.scale00, 'should leave a empty type declaration if equal to default value defined in ValueType');
+
+        // to make the deserialization for ValueTypes more unique and simplify
+        ok(actualDefaultScaled.scale10.x === 1 && actualDefaultScaled.scale10.z === 1, 'should serialize non-zero sub properties even if they equal to default values defined in user class');
+
+        ok(actualDefaultScaled.scale0 === undefined && actualDefaultScaled.scale1 === undefined, 'should eliminate entire property if equals to the default value defined in user class');
+
+        deepEqual(actualDefaultScaled, expectedDefaultScaleResult, 'test all serialized result');
+
+        cc.js.unregisterClass(MyAsset);
+    });
+
 }
